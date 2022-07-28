@@ -1,0 +1,40 @@
+name: Deploy workflow
+
+on:
+  push:
+
+env:
+  module_name: github.com/G-Research/armada # from go.mod
+jobs:
+  build-test-push:
+    name: Build, test, and push
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/setup-go@v1
+        with:
+          go-version: '^1.18'  # should match Dockerfile and go.mod
+
+      - run: go version
+      - run: echo "GOPATH=${GITHUB_WORKSPACE}/go" >> $GITHUB_ENV
+      - run: echo "${{ env.GOPATH }}/bin" >> $GITHUB_PATH
+      - run: go env
+
+      - uses: actions/checkout@v2
+        with:
+          path: ${{ env.GOPATH }}/src/${{ env.module_name }}
+
+      # Login to ECR
+      -
+        name: Login to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - run: go mod tidy
+        working-directory: ${{ env.GOPATH }}/src/${{ env.module_name }}
+      - run: make build-docker-executor
+        working-directory: ${{ env.GOPATH }}/src/${{ env.module_name }}
+      - run: docker tag armada-executor dpejcev/armada-executor:latest
+        working-directory: ${{ env.GOPATH }}/src/${{ env.module_name }}
+      - run: docker push dpejcev/armada-executor
+        working-directory: ${{ env.GOPATH }}/src/${{ env.module_name }}
