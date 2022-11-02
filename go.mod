@@ -26,7 +26,7 @@ require (
 	github.com/go-swagger/go-swagger v0.29.0
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/protobuf v1.5.2
-	github.com/google/go-cmp v0.5.8
+	github.com/google/go-cmp v0.5.9
 	github.com/google/uuid v1.3.0
 	github.com/gordonklaus/ineffassign v0.0.0-20210914165742-4cc7213b9bc8
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0
