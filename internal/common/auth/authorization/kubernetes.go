@@ -5,11 +5,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"k8s.io/utils/clock"
 	"os"
 	"strings"
 	"time"
-
-	"k8s.io/apimachinery/pkg/util/clock"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/util/metautils"
 	"github.com/patrickmn/go-cache"

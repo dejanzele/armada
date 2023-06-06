@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"k8s.io/utils/clock"
 	"time"
 
 	"github.com/gogo/protobuf/proto"
@@ -11,7 +12,6 @@ import (
 	"github.com/pkg/errors"
 	"golang.org/x/exp/maps"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/clock"
 
 	"github.com/armadaproject/armada/internal/common/logging"
 	"github.com/armadaproject/armada/internal/common/stringinterner"
@@ -124,14 +124,14 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}
 	log.Infof("JobDb initialised in %s", s.clock.Since(start))
 
-	ticker := s.clock.NewTicker(s.cyclePeriod)
+	ticker := time.NewTicker(s.cyclePeriod)
 	prevLeaderToken := InvalidLeaderToken()
 	for {
 		select {
 		case <-ctx.Done():
 			log.Infof("context cancelled; returning.")
 			return ctx.Err()
-		case <-ticker.C():
+		case <-ticker.C:
 			start := s.clock.Now()
 			leaderToken := s.leaderController.GetToken()
 			fullUpdate := false

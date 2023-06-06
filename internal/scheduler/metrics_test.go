@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	k8stesting "k8s.io/utils/clock/testing"
 	"testing"
 	"time"
 
@@ -10,7 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/util/clock"
 
 	commonmetrics "github.com/armadaproject/armada/internal/common/metrics"
 	"github.com/armadaproject/armada/internal/scheduler/database"
@@ -85,7 +85,7 @@ func TestMetricsCollector_TestCollect_QueueMetrics(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
-			testClock := clock.NewFakeClock(testfixtures.BaseTime)
+			testClock := k8stesting.NewFakeClock(testfixtures.BaseTime)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
@@ -208,7 +208,7 @@ func TestMetricsCollector_TestCollect_ClusterMetrics(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
-			testClock := clock.NewFakeClock(testfixtures.BaseTime)
+			testClock := k8stesting.NewFakeClock(testfixtures.BaseTime)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 

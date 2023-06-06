@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"k8s.io/utils/clock"
 	"os"
 	"strings"
 	"sync"
@@ -12,7 +13,6 @@ import (
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/exp/maps"
-	"k8s.io/apimachinery/pkg/util/clock"
 
 	"github.com/armadaproject/armada/internal/armada/configuration"
 	"github.com/armadaproject/armada/internal/scheduler/database"

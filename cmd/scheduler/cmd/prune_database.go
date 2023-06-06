@@ -2,11 +2,11 @@ package cmd
 
 import (
 	"context"
+	"k8s.io/utils/clock"
 	"time"
 
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
-	"k8s.io/apimachinery/pkg/util/clock"
 
 	"github.com/armadaproject/armada/internal/common/database"
 	schedulerdb "github.com/armadaproject/armada/internal/scheduler/database"

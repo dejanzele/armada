@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	k8stesting "k8s.io/utils/clock/testing"
 	"testing"
 	"time"
 
@@ -11,7 +12,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/util/clock"
 
 	"github.com/armadaproject/armada/internal/armada/configuration"
 	"github.com/armadaproject/armada/internal/common/util"
@@ -77,7 +77,7 @@ func TestSubmitChecker_CheckPodRequirements(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			mockExecutorRepo := schedulermocks.NewMockExecutorRepository(ctrl)
 			mockExecutorRepo.EXPECT().GetExecutors(ctx).Return(tc.executors, nil).AnyTimes()
-			fakeClock := clock.NewFakeClock(baseTime)
+			fakeClock := k8stesting.NewFakeClock(baseTime)
 			submitCheck := NewSubmitChecker(tc.executorTimout, tc.config, mockExecutorRepo)
 			submitCheck.clock = fakeClock
 			submitCheck.updateExecutors(ctx)
@@ -175,7 +175,7 @@ func TestSubmitChecker_TestCheckApiJobs(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			mockExecutorRepo := schedulermocks.NewMockExecutorRepository(ctrl)
 			mockExecutorRepo.EXPECT().GetExecutors(ctx).Return(tc.executors, nil).AnyTimes()
-			fakeClock := clock.NewFakeClock(testfixtures.BaseTime)
+			fakeClock := k8stesting.NewFakeClock(testfixtures.BaseTime)
 			submitCheck := NewSubmitChecker(tc.executorTimout, tc.config, mockExecutorRepo)
 			submitCheck.clock = fakeClock
 			submitCheck.updateExecutors(ctx)

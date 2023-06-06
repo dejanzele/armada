@@ -2,11 +2,11 @@ package ingest
 
 import (
 	"context"
+	"k8s.io/utils/clock"
 	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
-	"k8s.io/apimachinery/pkg/util/clock"
 )
 
 // Batcher batches up events from a channel.  Batches are created whenever maxItems have been

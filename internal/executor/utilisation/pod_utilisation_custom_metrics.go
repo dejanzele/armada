@@ -1,6 +1,7 @@
 package utilisation
 
 import (
+	"k8s.io/utils/clock"
 	"math"
 	"net/http"
 
@@ -8,7 +9,6 @@ import (
 	log "github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/util/clock"
 
 	"github.com/armadaproject/armada/internal/executor/configuration"
 	clusterContext "github.com/armadaproject/armada/internal/executor/context"

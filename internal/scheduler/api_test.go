@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	k8stesting "k8s.io/utils/clock/testing"
 	"testing"
 	"time"
 
@@ -12,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/context"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/clock"
 
 	"github.com/armadaproject/armada/internal/common/compress"
 	"github.com/armadaproject/armada/internal/common/mocks"
@@ -29,7 +29,7 @@ const nodeIdName = "kubernetes.io/hostname"
 
 func TestExecutorApi_LeaseJobRuns(t *testing.T) {
 	const maxJobsPerCall = uint(100)
-	testClock := clock.NewFakeClock(time.Now())
+	testClock := k8stesting.NewFakeClock(time.Now())
 	runId1 := uuid.New()
 	runId2 := uuid.New()
 	runId3 := uuid.New()

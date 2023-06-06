@@ -2,12 +2,12 @@ package scheduler
 
 import (
 	"context"
+	k8stesting "k8s.io/utils/clock/testing"
 	"testing"
 	"time"
 
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
-	"k8s.io/apimachinery/pkg/util/clock"
 
 	"github.com/stretchr/testify/require"
 
@@ -54,7 +54,7 @@ func TestPoolAssigner_AssignPool(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			mockExecutorRepo := schedulermocks.NewMockExecutorRepository(ctrl)
 			mockExecutorRepo.EXPECT().GetExecutors(ctx).Return(tc.executors, nil).AnyTimes()
-			fakeClock := clock.NewFakeClock(testfixtures.BaseTime)
+			fakeClock := k8stesting.NewFakeClock(testfixtures.BaseTime)
 			assigner, err := NewPoolAssigner(tc.executorTimout, tc.config, mockExecutorRepo)
 			require.NoError(t, err)
 			assigner.clock = fakeClock

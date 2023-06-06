@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	k8stesting "k8s.io/utils/clock/testing"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,7 +12,6 @@ import (
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/util/metautils"
 	authv1 "k8s.io/api/authentication/v1"
-	"k8s.io/apimachinery/pkg/util/clock"
 
 	"github.com/patrickmn/go-cache"
 	"github.com/stretchr/testify/assert"
@@ -120,7 +120,7 @@ func createTestAuthService(kidMapping string, authenticated bool, username strin
 			Authenticated: authenticated,
 			Username:      username,
 		},
-		Clock: clock.NewFakeClock(time.Unix(currentTime, 0)),
+		Clock: k8stesting.NewFakeClock(time.Unix(currentTime, 0)),
 	}
 }
 

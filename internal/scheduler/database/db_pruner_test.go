@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	k8stesting "k8s.io/utils/clock/testing"
 	"testing"
 	"time"
 
@@ -10,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/util/clock"
 
 	"github.com/armadaproject/armada/internal/common/database"
 	commonutil "github.com/armadaproject/armada/internal/common/util"
@@ -110,7 +110,7 @@ func TestPruneDb_RemoveJobs(t *testing.T) {
 			err := WithTestDb(func(_ *Queries, db *pgxpool.Pool) error {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
-				testClock := clock.NewFakeClock(baseTime)
+				testClock := k8stesting.NewFakeClock(baseTime)
 
 				// Set up db
 				jobsToInsert := commonutil.Map(tc.jobs, populateRequiredJobFields)
@@ -188,7 +188,7 @@ func TestPruneDb_RemoveMarkers(t *testing.T) {
 			err := WithTestDb(func(_ *Queries, db *pgxpool.Pool) error {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
-				testClock := clock.NewFakeClock(baseTime)
+				testClock := k8stesting.NewFakeClock(baseTime)
 
 				// Set up db
 				for _, m := range tc.markers {

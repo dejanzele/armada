@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"k8s.io/utils/clock"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -9,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
-	"k8s.io/apimachinery/pkg/util/clock"
 
 	commonmetrics "github.com/armadaproject/armada/internal/common/metrics"
 	"github.com/armadaproject/armada/internal/common/resource"
@@ -77,14 +77,14 @@ func NewMetricsCollector(
 
 // Run enters s a loop which updates the metrics every refreshPeriod until the supplied context is cancelled
 func (c *MetricsCollector) Run(ctx context.Context) error {
-	ticker := c.clock.NewTicker(c.refreshPeriod)
+	ticker := time.NewTicker(c.refreshPeriod)
 	log.Infof("Will update metrics every %s", c.refreshPeriod)
 	for {
 		select {
 		case <-ctx.Done():
 			log.Debugf("Context cancelled, returning..")
 			return nil
-		case <-ticker.C():
+		case <-ticker.C:
 			err := c.refresh(ctx)
 			if err != nil {
 				log.WithError(err).Warnf("error refreshing metrics state")

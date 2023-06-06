@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	k8stesting "k8s.io/utils/clock/testing"
 	"sync"
 	"testing"
 	"time"
@@ -12,7 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/clock"
 
 	protoutil "github.com/armadaproject/armada/internal/common/proto"
 	"github.com/armadaproject/armada/internal/common/stringinterner"
@@ -396,7 +396,7 @@ func TestScheduler_TestCycle(t *testing.T) {
 				updatedRuns: tc.runUpdates,
 				shouldError: tc.fetchError,
 			}
-			testClock := clock.NewFakeClock(time.Now())
+			testClock := k8stesting.NewFakeClock(time.Now())
 			schedulingAlgo := &testSchedulingAlgo{
 				jobsToSchedule: tc.expectedJobRunLeased,
 				jobsToPreempt:  tc.expectedJobRunPreempted,
@@ -569,7 +569,7 @@ func subtractEventsFromOutstandingEventsByType(eventSequences []*armadaevents.Ev
 func TestRun(t *testing.T) {
 	// Test objects
 	jobRepo := testJobRepository{numReceivedPartitions: 100}
-	testClock := clock.NewFakeClock(time.Now())
+	testClock := k8stesting.NewFakeClock(time.Now())
 	schedulingAlgo := &testSchedulingAlgo{}
 	publisher := &testPublisher{}
 	clusterRepo := &testExecutorRepository{}

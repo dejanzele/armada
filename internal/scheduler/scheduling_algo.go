@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"k8s.io/utils/clock"
 	"math/rand"
 	"strings"
 	"time"
@@ -13,7 +14,6 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
-	"k8s.io/apimachinery/pkg/util/clock"
 
 	"github.com/armadaproject/armada/internal/armada/configuration"
 	"github.com/armadaproject/armada/internal/common/logging"

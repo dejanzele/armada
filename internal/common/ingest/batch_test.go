@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	k8stesting "k8s.io/utils/clock/testing"
 	"sync"
 	"testing"
 	"time"
@@ -9,7 +10,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/util/clock"
 )
 
 const (
@@ -43,7 +43,7 @@ func (r *resultHolder) resultLength() int {
 
 func TestBatch_MaxItems(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	testClock := clock.NewFakeClock(time.Now())
+	testClock := k8stesting.NewFakeClock(time.Now())
 	inputChan := make(chan int)
 	result := newResultHolder()
 	batcher := NewBatcher[int](inputChan, defaultMaxItems, defaultMaxTimeOut, result.add)
@@ -68,7 +68,7 @@ func TestBatch_MaxItems(t *testing.T) {
 
 func TestBatch_Time(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	testClock := clock.NewFakeClock(time.Now())
+	testClock := k8stesting.NewFakeClock(time.Now())
 	inputChan := make(chan int)
 	result := newResultHolder()
 	batcher := NewBatcher[int](inputChan, defaultMaxItems, defaultMaxTimeOut, result.add)
@@ -90,7 +90,7 @@ func TestBatch_Time(t *testing.T) {
 
 func TestBatch_Time_WithIntialQuiet(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	testClock := clock.NewFakeClock(time.Now())
+	testClock := k8stesting.NewFakeClock(time.Now())
 	inputChan := make(chan int)
 	result := newResultHolder()
 	batcher := NewBatcher[int](inputChan, defaultMaxItems, defaultMaxTimeOut, result.add)

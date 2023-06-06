@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"k8s.io/utils/clock"
 	"strings"
 
 	"github.com/apache/pulsar-client-go/pulsar"
@@ -10,7 +11,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/logrus/ctxlogrus"
 	"github.com/pkg/errors"
-	"k8s.io/apimachinery/pkg/util/clock"
 
 	"github.com/armadaproject/armada/internal/common/compress"
 	"github.com/armadaproject/armada/internal/common/logging"

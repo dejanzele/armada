@@ -2,13 +2,13 @@ package scheduler
 
 import (
 	"context"
+	k8stesting "k8s.io/utils/clock/testing"
 	"testing"
 	"time"
 
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/util/clock"
 
 	"github.com/armadaproject/armada/internal/scheduler/database"
 	"github.com/armadaproject/armada/internal/scheduler/jobdb"
@@ -179,7 +179,7 @@ func TestLegacySchedulingAlgo_TestSchedule(t *testing.T) {
 			require.NoError(t, err)
 
 			// Use a test clock so we can control time
-			algo.clock = clock.NewFakeClock(testfixtures.BaseTime)
+			algo.clock = k8stesting.NewFakeClock(testfixtures.BaseTime)
 
 			// Set up JobDb
 			jobDb := jobdb.NewJobDb()
@@ -382,7 +382,7 @@ func TestLegacySchedulingAlgo_TestSchedule_ExecutorOrdering(t *testing.T) {
 			require.NoError(t, err)
 			scheduledExecutorsIds := []string{}
 			// Use a test clock so we can control time
-			algo.clock = clock.NewFakeClock(testfixtures.BaseTime)
+			algo.clock = k8stesting.NewFakeClock(testfixtures.BaseTime)
 			algo.onExecutorScheduled = func(executor *schedulerobjects.Executor) {
 				scheduledExecutorsIds = append(scheduledExecutorsIds, executor.Id)
 				tc.onExecutorScheduled(executor)

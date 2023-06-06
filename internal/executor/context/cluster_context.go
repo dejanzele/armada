@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"k8s.io/utils/clock"
 	"time"
 
 	"github.com/pkg/errors"
@@ -16,7 +17,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/client-go/informers"
 	informer "k8s.io/client-go/informers/core/v1"
 	discovery_informer "k8s.io/client-go/informers/discovery/v1"

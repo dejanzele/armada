@@ -4,6 +4,7 @@ import (
 	ctx "context"
 	"encoding/json"
 	"errors"
+	k8stesting "k8s.io/utils/clock/testing"
 	"testing"
 	"time"
 
@@ -16,7 +17,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
@@ -328,7 +328,7 @@ func TestKubernetesClusterContext_DeletePodWithCondition_WhenPodDoesNotExist(t *
 
 func TestKubernetesClusterContext_DeletePodWithCondition_ForceDeletesPod(t *testing.T) {
 	clusterContext, client := setupTest()
-	testClock := clock.NewFakeClock(time.Now())
+	testClock := k8stesting.NewFakeClock(time.Now())
 	// create a pod with a deletion event 5 minutes in the past. This should be ignored
 	pod := createBatchPod()
 	pod.ObjectMeta.Annotations = map[string]string{domain.MarkedForDeletion: "now"}
@@ -411,7 +411,7 @@ func TestKubernetesClusterContext_ProcessPodsToDelete_CallPatchOnClient_WhenPods
 
 func TestKubernetesClusterContext_ProcessPodsToDelete_ForceKill(t *testing.T) {
 	clusterContext, client := setupTest()
-	testClock := clock.NewFakeClock(time.Now())
+	testClock := k8stesting.NewFakeClock(time.Now())
 
 	// create a pod with a deletion event 5 minutes in the past. This should be ignored
 	pod := createSubmittedBatchPod(t, clusterContext)

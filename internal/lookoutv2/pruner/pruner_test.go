@@ -2,13 +2,13 @@ package pruner
 
 import (
 	"context"
+	k8stesting "k8s.io/utils/clock/testing"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/stretchr/testify/assert"
-	"k8s.io/apimachinery/pkg/util/clock"
 
 	"github.com/armadaproject/armada/internal/common/compress"
 	"github.com/armadaproject/armada/internal/common/database/lookout"
@@ -132,7 +132,7 @@ func TestPruneDb(t *testing.T) {
 
 				dbConn, err := db.Acquire(ctx)
 				assert.NoError(t, err)
-				err = PruneDb(ctx, dbConn.Conn(), tc.expireAfter, 10, clock.NewFakeClock(baseTime))
+				err = PruneDb(ctx, dbConn.Conn(), tc.expireAfter, 10, k8stesting.NewFakeClock(baseTime))
 				assert.NoError(t, err)
 
 				queriedJobIdsPerTable := []map[string]bool{
