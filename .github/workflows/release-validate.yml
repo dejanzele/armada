@@ -36,6 +36,17 @@ jobs:
               branch_contains_commit=$(git branch --contains=$sha $ALLOWED_BRANCH | wc -l)
               echo "Branch contains commit: $branch_contains_commit"
 
+              if [ "$branch_contains_commit" -eq 1 ]; then
+                echo "Branch $ALLOWED_BRANCH contains commit $sha"
+              else
+                echo "Branch $ALLOWED_BRANCH does not contain commit $sha"
+              fi
+              if [ "$latest_tag_commit" == "$sha" ]; then
+                echo "Latest tag $tag matches the current commit $sha"
+              else
+                echo "Latest tag $tag does not match the current commit $sha"
+              fi
+
               result=$([ "$latest_tag_commit" == "$sha" ] && [ "$branch_contains_commit" -eq 1 ])
             ;;
             *)
