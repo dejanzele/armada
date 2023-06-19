@@ -24,12 +24,12 @@ jobs:
         run: |
           ref=${{ github.ref }}
           tag=${ref#refs/tags/}
-          echo "Current ref: $ref"
+          echo "Current tag: $tag"
           sha=${{ github.sha }}
           echo "Current sha: $sha"
           case $tag in
             v?*)
-              [ $(git rev-parse refs/tags/$ref) == $sha ] &&
+              [ $(git rev-parse refs/tags/$tag) == $sha ] &&
               [ $(git branch --contains=$sha $ALLOWED_BRANCH | wc -l) -eq 1 ]
             ;;
             *)
