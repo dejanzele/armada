@@ -20,24 +20,28 @@ jobs:
       - name: "Checkout"
         uses: "actions/checkout@v3"
 
-      - name: Get latest tag
-        id: latest_tag
-        run: |
-          git fetch --tags
-          echo ::set-output name=tag::$(git describe --abbrev=0 --tags)
-
       - name: Compare tags
         id: compare_tags
         run: |
-          latest_tag=${{ steps.latest_tag.outputs.tag }}
-          current_commit=$(git rev-parse HEAD)
-
-          if [[ "$(git rev-list -n 1 $latest_tag)" == "$current_commit" ]]; then
-            echo "Latest tag ($latest_tag) matches the current commit ($current_commit)."
-            echo "::set-output name=tag_match::true"
-          else
-            echo "Latest tag ($latest_tag) does not match the current commit ($current_commit)."
+          allowed_branch="devel"
+          ref=${{ github.event.workflow_run.head_branch }}
+          sha=${{ github.event.workflow_run.head_sha }}
+          case $ref in
+            v?*)
+              [ $(git rev-parse refs/tags/$ref) == $sha ] &&
+              [ $(git branch --contains=$sha $allowed_branch | wc -l) -eq 1 ]
+            ;;
+            *)
+              false
+            ;;
+          esac
+          if [ $? -ne 0 ]; then
+            echo "::error ::Invalid ref $ref $sha"
             echo "::set-output name=tag_match::false"
+            exit 1
+          else
+            echo "Latest tag ($ref) matches the current commit ($sha)."
+            echo "::set-output name=tag_match::true"
           fi
 
   release:
