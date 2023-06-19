@@ -1,51 +1,18 @@
 name: Release Armada components
 
 on:
-  push:
+  workflow_run:
+    types: [completed]
+    workflows: [Validate Release]
     branches:
-      - devel
       - v*
 
 permissions:
   contents: write
 
 jobs:
-  compare_tags:
-#    if: github.repository_owner == 'armadaproject'
-    name: "Compare tags"
-    runs-on: ubuntu-22.04
-
-    steps:
-      - name: "Checkout"
-        uses: "actions/checkout@v3"
-
-      - name: Compare tags
-        id: compare_tags
-        run: |
-          allowed_branch="devel"
-          ref=${{ github.event.workflow_run.head_branch }}
-          sha=${{ github.event.workflow_run.head_sha }}
-          case $ref in
-            v?*)
-              [ $(git rev-parse refs/tags/$ref) == $sha ] &&
-              [ $(git branch --contains=$sha $allowed_branch | wc -l) -eq 1 ]
-            ;;
-            *)
-              false
-            ;;
-          esac
-          if [ $? -ne 0 ]; then
-            echo "::error ::Invalid ref $ref $sha"
-            echo "::set-output name=tag_match::false"
-            exit 1
-          else
-            echo "Latest tag ($ref) matches the current commit ($sha)."
-            echo "::set-output name=tag_match::true"
-          fi
-
   release:
-    needs: compare_tags
-    if: needs.compare_tags.outputs.tag_match == 'true'
+    if: github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success'
     name: "Release"
     runs-on: ubuntu-22.04
     environment: armada-dockerhub
