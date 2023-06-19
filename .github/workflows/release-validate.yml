@@ -22,10 +22,9 @@ jobs:
         env:
           ALLOWED_BRANCH: "devel"
         run: |
-          echo "${{ github.event }}"
-          ref=${{ github.event.push.head }}
+          ref=${{ github.event.payload.head }}
           echo "Current ref: $ref"
-          sha=${{ github.event.workflow_run.ref }}
+          sha=${{ github.event.payload.ref }}
           echo "Current sha: $sha"
           case $ref in
             v?*)
