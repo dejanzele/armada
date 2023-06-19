@@ -3,6 +3,7 @@ name: Release Armada components
 on:
   push:
     branches:
+      - devel
       - v*
 
 permissions:
