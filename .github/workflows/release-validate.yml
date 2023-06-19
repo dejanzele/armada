@@ -23,6 +23,7 @@ jobs:
           ALLOWED_BRANCH: "devel"
         run: |
           ref=${{ github.ref }}
+          ref=${ref#refs/tags/}
           echo "Current ref: $ref"
           sha=${{ github.sha }}
           echo "Current sha: $sha"
