@@ -3,8 +3,6 @@ name: Release Armada components
 on:
   push:
     branches:
-      - master
-      - devel
       - v*
 
 permissions:
@@ -12,7 +10,7 @@ permissions:
 
 jobs:
   compare_tags:
-    if: github.repository_owner == 'armadaproject'
+#    if: github.repository_owner == 'armadaproject'
     name: "Compare tags"
     runs-on: ubuntu-22.04
 
@@ -46,7 +44,7 @@ jobs:
 
   release:
     needs: compare_tags
-    if: github.repository_owner == 'armadaproject' && needs.compare_tags.outputs.tag_match == 'true'
+    if: needs.compare_tags.outputs.tag_match == 'true'
     name: "Release"
     runs-on: ubuntu-22.04
     environment: armada-dockerhub
