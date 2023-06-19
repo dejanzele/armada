@@ -22,9 +22,9 @@ jobs:
         env:
           ALLOWED_BRANCH: "devel"
         run: |
-          ref=${{ github.event.payload.head }}
+          ref=${{ github.ref }}
           echo "Current ref: $ref"
-          sha=${{ github.event.payload.ref }}
+          sha=${{ github.sha }}
           echo "Current sha: $sha"
           case $ref in
             v?*)
