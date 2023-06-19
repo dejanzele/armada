@@ -23,16 +23,17 @@ jobs:
           ALLOWED_BRANCH: "devel"
         run: |
           ref=${{ github.ref }}
-          ref=${ref#refs/tags/}
+          tag=${ref#refs/tags/}
           echo "Current ref: $ref"
           sha=${{ github.sha }}
           echo "Current sha: $sha"
-          case $ref in
+          case $tag in
             v?*)
               [ $(git rev-parse refs/tags/$ref) == $sha ] &&
               [ $(git branch --contains=$sha $ALLOWED_BRANCH | wc -l) -eq 1 ]
             ;;
             *)
+              echo "Invalid tag $tag"
               false
             ;;
           esac
