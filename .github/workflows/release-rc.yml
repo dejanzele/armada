@@ -3,8 +3,8 @@ name: Release Armada components - RC
 on:
   push:
     branches:
-      - main
       - master
+      - devel
 
 permissions:
   contents: write

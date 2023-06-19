@@ -2,15 +2,47 @@ name: Release Armada components
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - master
+      - devel
+      - v*
 
 permissions:
   contents: write
 
 jobs:
-  release:
+  compare_tags:
     if: github.repository_owner == 'armadaproject'
+    name: "Compare tags"
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: "Checkout"
+        uses: "actions/checkout@v3"
+
+      - name: Get latest tag
+        id: latest_tag
+        run: |
+          git fetch --tags
+          echo ::set-output name=tag::$(git describe --abbrev=0 --tags)
+
+      - name: Compare tags
+        id: compare_tags
+        run: |
+          latest_tag=${{ steps.latest_tag.outputs.tag }}
+          current_commit=$(git rev-parse HEAD)
+
+          if [[ "$(git rev-list -n 1 $latest_tag)" == "$current_commit" ]]; then
+            echo "Latest tag ($latest_tag) matches the current commit ($current_commit)."
+            echo "::set-output name=tag_match::true"
+          else
+            echo "Latest tag ($latest_tag) does not match the current commit ($current_commit)."
+            echo "::set-output name=tag_match::false"
+          fi
+
+  release:
+    needs: compare_tags
+    if: github.repository_owner == 'armadaproject' && needs.compare_tags.outputs.tag_match == 'true'
     name: "Release"
     runs-on: ubuntu-22.04
     environment: armada-dockerhub
