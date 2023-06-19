@@ -29,6 +29,7 @@ jobs:
           echo "Current sha: $sha"
           case $tag in
             v?*)
+              echo "Valid does latest tag $tag match the current commit $sha?"
               [ $(git rev-parse refs/tags/$tag) == $sha ] &&
               [ $(git branch --contains=$sha $ALLOWED_BRANCH | wc -l) -eq 1 ]
             ;;
