@@ -43,6 +43,7 @@ jobs:
               false
             ;;
           esac
+          echo "Result: $result"
           if [ $result -ne 0 ]; then
             echo "Latest tag ($ref) does not match the current commit ($sha)."
             echo "::error ::Invalid ref $ref $sha"
