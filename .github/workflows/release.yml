@@ -3,9 +3,10 @@ name: Release Armada components
 on:
   workflow_run:
     types: [completed]
-    workflows: [Validate]
+    workflows: [Validate Release]
     branches:
       - v*
+      - devel
 
 permissions:
   contents: write
