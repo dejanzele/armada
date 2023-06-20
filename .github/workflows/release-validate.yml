@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: "Checkout"
         uses: "actions/checkout@v3"
+        with:
+          fetch-depth: 0
 
       - name: Compare tags
         env:
@@ -25,27 +27,13 @@ jobs:
           ref=${{ github.ref }}
           tag=${ref#refs/tags/}
           echo "Current tag: $tag"
-          sha=$GITHUB_SHA
+          sha=${{ github.sha }}
           echo "Current sha: $sha"
-          result=9
+          result=0
           case $tag in
             v?*)
-              echo "Valid does latest tag $tag match the current commit $sha?"
               latest_tag_commit=$(git rev-parse refs/tags/$tag)
-              echo "Latest tag commit: $latest_tag_commit"
               branch_contains_commit=$(git branch --contains=$sha $ALLOWED_BRANCH | wc -l)
-              echo "Branch contains commit: $branch_contains_commit"
-
-              if [ "$branch_contains_commit" -eq 1 ]; then
-                echo "Branch $ALLOWED_BRANCH contains commit $sha"
-              else
-                echo "Branch $ALLOWED_BRANCH does not contain commit $sha"
-              fi
-              if [ "$latest_tag_commit" == "$sha" ]; then
-                echo "Latest tag $tag matches the current commit $sha"
-              else
-                echo "Latest tag $tag does not match the current commit $sha"
-              fi
 
               result=$([ "$latest_tag_commit" == "$sha" ] && [ "$branch_contains_commit" -eq 1 ])
             ;;
@@ -56,9 +44,9 @@ jobs:
           esac
           echo "Result: $result"
           if [ $result -ne 0 ]; then
-            echo "Latest tag ($ref) does not match the current commit ($sha)."
+            echo "Latest tag ($tag) does not match the current commit ($sha)."
             echo "::error ::Invalid ref $ref $sha"
             exit 1
           else
-            echo "Latest tag ($ref) matches the current commit ($sha)."
+            echo "Latest tag ($tag) matches the current commit ($sha)."
           fi
