@@ -36,7 +36,7 @@ jobs:
               git branch --contains=$sha $ALLOWED_BRANCH
               branch_contains_commit=$?
 
-              if [[ $branch_contains_commit -eq 0 && $latest_tag_commit -eq $sha ]]; then
+              if [[ $branch_contains_commit -eq 0 && "$latest_tag_commit" -eq "$sha" ]]; then
                 result=0
               else
                 result=1
