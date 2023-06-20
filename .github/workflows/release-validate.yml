@@ -33,7 +33,7 @@ jobs:
           case $tag in
             v?*)
               latest_tag_commit=$(git rev-parse refs/tags/$tag^{})
-              git branch --contains=$sha $ALLOWED_BRANCH
+              git branch --contains=$sha $ALLOWED_BRANCH >> /dev/null
               branch_contains_commit=$?
 
               if [[ $branch_contains_commit -eq 0 && "$latest_tag_commit" -eq "$sha" ]]; then
