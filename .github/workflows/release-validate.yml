@@ -35,14 +35,14 @@ jobs:
               latest_tag_commit=$(git rev-parse refs/tags/$tag)
               branch_contains_commit=$(git branch --contains=$sha $ALLOWED_BRANCH | wc -l)
 
-              result=$([ "$latest_tag_commit" == "$sha" ] && [ "$branch_contains_commit" -eq 1 ])
+              [ "$latest_tag_commit" == "$sha" ] && [ "$branch_contains_commit" -eq 1 ]
+              result=$?
             ;;
             *)
               echo "Invalid tag $tag"
-              false
+              result=1
             ;;
           esac
-          echo "Result: $result"
           if [ $result -ne 0 ]; then
             echo "Latest tag ($tag) does not match the current commit ($sha)."
             echo "::error ::Invalid ref $ref $sha"
