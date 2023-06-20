@@ -22,7 +22,7 @@ jobs:
 
       - name: Compare tags
         env:
-          ALLOWED_BRANCH: "devel"
+          ALLOWED_BRANCH: "master"
         run: |
           ref=${{ github.ref }}
           tag=${ref#refs/tags/}

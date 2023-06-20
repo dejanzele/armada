@@ -5,8 +5,8 @@ on:
     types: [completed]
     workflows: [Validate Release]
     branches:
+      - master
       - v*
-      - devel
 
 permissions:
   contents: write
