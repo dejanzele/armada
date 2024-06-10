@@ -44,7 +44,7 @@ require (
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.18.2
-	github.com/stretchr/testify v1.8.4
+	github.com/stretchr/testify v1.9.0
 	github.com/weaveworks/promrus v1.2.0
 	golang.org/x/exp v0.0.0-20240222234643-814bf88cf225
 	golang.org/x/net v0.22.0
@@ -69,8 +69,8 @@ require (
 	github.com/Masterminds/semver/v3 v3.2.1
 	github.com/benbjohnson/immutable v0.4.3
 	github.com/charmbracelet/glamour v0.7.0
-	github.com/go-openapi/errors v0.21.0
-	github.com/go-openapi/strfmt v0.21.10
+	github.com/go-openapi/errors v0.22.0
+	github.com/go-openapi/strfmt v0.23.0
 	github.com/go-openapi/swag v0.22.6
 	github.com/go-openapi/validate v0.22.6
 	github.com/go-playground/validator/v10 v10.15.4
@@ -204,7 +204,7 @@ require (
 	github.com/xlab/treeprint v1.1.0 // indirect
 	github.com/yuin/goldmark v1.5.4 // indirect
 	github.com/yuin/goldmark-emoji v1.0.2 // indirect
-	go.mongodb.org/mongo-driver v1.13.1 // indirect
+	go.mongodb.org/mongo-driver v1.14.0 // indirect
 	go.starlark.net v0.0.0-20200306205701-8dd3e2ee1dd5 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
