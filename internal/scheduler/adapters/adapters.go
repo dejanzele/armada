@@ -1,12 +1,28 @@
 package adapters
 
 import (
+	batchv1 "k8s.io/api/batch/v1"
 	v1 "k8s.io/api/core/v1"
 	k8sResource "k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/armadaproject/armada/internal/scheduler/schedulerobjects"
 	"github.com/armadaproject/armada/pkg/api"
 )
+
+func PodRequirementsFromJobSpec(jobSpec *batchv1.JobSpec) *schedulerobjects.PodRequirements {
+	podSpec := &jobSpec.Template.Spec
+	preemptionPolicy := string(v1.PreemptLowerPriority)
+	if podSpec.PreemptionPolicy != nil {
+		preemptionPolicy = string(*podSpec.PreemptionPolicy)
+	}
+	return &schedulerobjects.PodRequirements{
+		NodeSelector:         podSpec.NodeSelector,
+		Affinity:             podSpec.Affinity,
+		Tolerations:          podSpec.Tolerations,
+		PreemptionPolicy:     preemptionPolicy,
+		ResourceRequirements: api.CalculateResourceRequirements(podSpec, jobSpec),
+	}
+}
 
 // PodRequirementsFromPodSpec function returns *schedulerobjects.PodRequirements for podSpec.
 // An error is logged if the podSpec uses an unknown priority class.

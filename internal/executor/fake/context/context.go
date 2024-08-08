@@ -2,6 +2,7 @@ package context
 
 import (
 	"fmt"
+	batchv1 "k8s.io/api/batch/v1"
 	"math/rand"
 	"regexp"
 	"sort"
@@ -64,6 +65,16 @@ type FakeClusterContext struct {
 	nodes            []*v1.Node
 	nodesByNodeId    map[string]*v1.Node
 	nodeAllocation   map[string]nodeAllocation
+}
+
+func (c *FakeClusterContext) SubmitJob(job *batchv1.Job, owner string, ownerGroups []string) (*batchv1.Job, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (c *FakeClusterContext) DeleteJobs(jobs []*batchv1.Job) {
+	//TODO implement me
+	panic("implement me")
 }
 
 func NewFakeClusterContext(appConfig configuration.ApplicationConfiguration, nodeIdLabel string, nodeSpecs []*NodeSpec) cluster_context.ClusterContext {

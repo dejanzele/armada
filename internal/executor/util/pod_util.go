@@ -3,6 +3,7 @@ package util
 import (
 	"errors"
 	"fmt"
+	batchv1 "k8s.io/api/batch/v1"
 	"strconv"
 	"time"
 
@@ -105,6 +106,10 @@ func ExtractJobId(pod *v1.Pod) string {
 	return pod.Labels[domain.JobId]
 }
 
+func ExtractJobIdFromJob(job *batchv1.Job) string {
+	return job.Labels[domain.JobId]
+}
+
 func ExtractQueue(pod *v1.Pod) string {
 	return pod.Labels[domain.Queue]
 }
@@ -134,8 +139,17 @@ func ExtractPodNumber(pod *v1.Pod) int {
 	return i
 }
 
+func ExtractJobNumber(job *batchv1.Job) int {
+	i, _ := strconv.Atoi(job.Labels[domain.PodNumber])
+	return i
+}
+
 func ExtractPodKey(pod *v1.Pod) string {
 	return fmt.Sprintf("%s_%d", ExtractJobId(pod), ExtractPodNumber(pod))
+}
+
+func ExtractJobKey(job *batchv1.Job) string {
+	return fmt.Sprintf("%s_%d", ExtractJobIdFromJob(job), ExtractJobNumber(job))
 }
 
 func FilterCompletedPods(pods []*v1.Pod) []*v1.Pod {

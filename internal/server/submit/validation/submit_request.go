@@ -110,6 +110,26 @@ func validateHasNamespace(j *api.JobSubmitRequestItem, _ configuration.Submissio
 
 // Validates that the JobSubmitRequestItem has exactly one podspec defined.
 func validateHasPodSpec(j *api.JobSubmitRequestItem, _ configuration.SubmissionConfig) error {
+	if j.JobSpec == nil && len(j.JobSpecs) == 0 && j.PodSpec == nil && len(j.PodSpecs) == 0 {
+		return errors.Errorf("Job must contain at least one JobSpec or PodSpec")
+	}
+
+	if len(j.JobSpecs) > 0 || j.JobSpec != nil {
+		if j.JobSpec == nil && len(j.JobSpecs) == 0 {
+			return errors.Errorf("Job must contain at least one JobSpec")
+		}
+
+		if len(j.JobSpecs) > 0 && j.JobSpec != nil {
+			return errors.Errorf("JobSpec must be nil if JobSpecs is provided (i.e., these are exclusive)")
+		}
+
+		if len(j.JobSpecs) > 1 {
+			return errors.Errorf("Jobs with multiple specs are not supported")
+		}
+
+		return nil
+	}
+
 	if j.PodSpec == nil && len(j.PodSpecs) == 0 {
 		return errors.Errorf("Job must contain at least one PodSpec")
 	}

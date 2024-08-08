@@ -1,6 +1,7 @@
 package util
 
 import (
+	batchv1 "k8s.io/api/batch/v1"
 	"runtime"
 	"sync"
 	"time"
@@ -21,8 +22,22 @@ type PodCache interface {
 	GetAll() []*v1.Pod
 }
 
+type JobCache interface {
+	Add(job *batchv1.Job)
+	AddIfNotExists(job *batchv1.Job) bool
+	Update(key string, job *batchv1.Job) bool
+	Delete(jobId string)
+	Get(jobId string) *batchv1.Job
+	GetAll() []*batchv1.Job
+}
+
 type cacheRecord struct {
 	pod    *v1.Pod
+	expiry time.Time
+}
+
+type jobCacheRecord struct {
+	job    *batchv1.Job
 	expiry time.Time
 }
 
@@ -146,6 +161,134 @@ func (podCache *mapPodCache) runCleanupLoop(interval time.Duration) {
 			select {
 			case <-ticker.C:
 				podCache.deleteExpired()
+			case <-stop:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+}
+
+type mapJobCache struct {
+	records       map[string]jobCacheRecord
+	rwLock        sync.RWMutex
+	defaultExpiry time.Duration
+	sizeGauge     prometheus.Gauge
+}
+
+func NewTimeExpiringJobCache(expiry time.Duration, cleanUpInterval time.Duration, metricName string) *mapJobCache {
+	cache := &mapJobCache{
+		records:       map[string]jobCacheRecord{},
+		rwLock:        sync.RWMutex{},
+		defaultExpiry: expiry,
+		sizeGauge: promauto.NewGauge(
+			prometheus.GaugeOpts{
+				Name: metrics.ArmadaExecutorMetricsPrefix + metricName + "_cache_size",
+				Help: "Number of jobs in the pod cache",
+			},
+		),
+	}
+	cache.runCleanupLoop(cleanUpInterval)
+	return cache
+}
+
+func (jobCache *mapJobCache) Add(job *batchv1.Job) {
+	podId := ExtractJobKey(job)
+
+	jobCache.rwLock.Lock()
+	defer jobCache.rwLock.Unlock()
+
+	jobCache.records[podId] = jobCacheRecord{job: job.DeepCopy(), expiry: time.Now().Add(jobCache.defaultExpiry)}
+	jobCache.sizeGauge.Set(float64(len(jobCache.records)))
+}
+
+func (jobCache *mapJobCache) AddIfNotExists(job *batchv1.Job) bool {
+	podId := ExtractJobKey(job)
+
+	jobCache.rwLock.Lock()
+	defer jobCache.rwLock.Unlock()
+
+	existing, ok := jobCache.records[podId]
+	exists := ok && existing.expiry.After(time.Now())
+	if !exists {
+		jobCache.records[podId] = jobCacheRecord{job: job.DeepCopy(), expiry: time.Now().Add(jobCache.defaultExpiry)}
+		jobCache.sizeGauge.Set(float64(len(jobCache.records)))
+	}
+	return !exists
+}
+
+func (jobCache *mapJobCache) Update(podId string, job *batchv1.Job) bool {
+	jobCache.rwLock.Lock()
+	defer jobCache.rwLock.Unlock()
+
+	existing, ok := jobCache.records[podId]
+	exists := ok && existing.expiry.After(time.Now())
+	if exists {
+		jobCache.records[podId] = jobCacheRecord{job: job.DeepCopy(), expiry: time.Now().Add(jobCache.defaultExpiry)}
+	}
+	return ok
+}
+
+func (jobCache *mapJobCache) Delete(jobId string) {
+	jobCache.rwLock.Lock()
+	defer jobCache.rwLock.Unlock()
+
+	_, ok := jobCache.records[jobId]
+	if ok {
+		delete(jobCache.records, jobId)
+		jobCache.sizeGauge.Set(float64(len(jobCache.records)))
+	}
+}
+
+func (jobCache *mapJobCache) Get(jobId string) *batchv1.Job {
+	jobCache.rwLock.Lock()
+	defer jobCache.rwLock.Unlock()
+
+	record := jobCache.records[jobId]
+	if record.expiry.After(time.Now()) {
+		return record.job.DeepCopy()
+	}
+	return nil
+}
+
+func (jobCache *mapJobCache) GetAll() []*batchv1.Job {
+	jobCache.rwLock.Lock()
+	defer jobCache.rwLock.Unlock()
+
+	all := make([]*batchv1.Job, 0, len(jobCache.records))
+	now := time.Now()
+
+	for _, c := range jobCache.records {
+		if c.expiry.After(now) {
+			all = append(all, c.job.DeepCopy())
+		}
+	}
+	return all
+}
+
+func (jobCache *mapJobCache) deleteExpired() {
+	jobCache.rwLock.Lock()
+	defer jobCache.rwLock.Unlock()
+	now := time.Now()
+
+	for id, c := range jobCache.records {
+		if c.expiry.Before(now) {
+			delete(jobCache.records, id)
+		}
+	}
+	// Set size here, so it also fixes the value if it ever gets out of sync
+	jobCache.sizeGauge.Set(float64(len(jobCache.records)))
+}
+
+func (jobCache *mapJobCache) runCleanupLoop(interval time.Duration) {
+	stop := make(chan bool)
+	runtime.SetFinalizer(jobCache, func(mapJobCache *mapJobCache) { stop <- true })
+	go func() {
+		ticker := time.NewTicker(interval)
+		for {
+			select {
+			case <-ticker.C:
+				jobCache.deleteExpired()
 			case <-stop:
 				ticker.Stop()
 				return

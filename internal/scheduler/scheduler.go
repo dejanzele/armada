@@ -149,7 +149,7 @@ func (s *Scheduler) Run(ctx *armadacontext.Context) error {
 			ctx := armadacontext.WithLogField(ctx, "cycleId", shortuuid.New())
 			leaderToken := s.leaderController.GetToken()
 			fullUpdate := false
-			ctx.Infof("received leaderToken; leader status is %t", leaderToken.Leader())
+			ctx.Infof("received leaderToken; leader status is %v", leaderToken.Leader())
 
 			// If we are becoming leader then we must ensure we have caught up to all Pulsar messages
 			if leaderToken.Leader() && leaderToken != prevLeaderToken {

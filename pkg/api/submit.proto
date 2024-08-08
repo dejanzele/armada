@@ -8,6 +8,7 @@ import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 import "k8s.io/api/core/v1/generated.proto";
 import "k8s.io/api/networking/v1/generated.proto";
+import "k8s.io/api/batch/v1/generated.proto";
 import "google/api/annotations.proto";
 import "pkg/api/health.proto";
 
@@ -26,6 +27,8 @@ message JobSubmitRequestItem {
     // If empty, the default scheduler is used.
     string scheduler = 11;
     // Ordinal 12 was previously used for queue_ttl_seconds
+    repeated k8s.io.api.batch.v1.JobSpec job_specs = 12;
+    k8s.io.api.batch.v1.JobSpec job_spec = 13 [deprecated = true];
 }
 
 message IngressConfig {
@@ -145,6 +148,8 @@ message Job {
   string scheduler = 20;
   // Queuing TTL for this job in seconds. If this job queues for more than this duration it will be cancelled. Zero indicates an infinite lifetime.
   int64 queue_ttl_seconds = 22;
+  repeated k8s.io.api.batch.v1.JobSpec job_specs = 23;
+  k8s.io.api.batch.v1.JobSpec job_spec = 24 [deprecated = true]; // Use JobSpecs instead
 }
 
 // swagger:model

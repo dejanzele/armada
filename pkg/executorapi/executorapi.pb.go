@@ -6,20 +6,18 @@ package executorapi
 import (
 	context "context"
 	fmt "fmt"
-	io "io"
-	math "math"
-	math_bits "math/bits"
-
+	api "github.com/armadaproject/armada/pkg/api"
+	armadaevents "github.com/armadaproject/armada/pkg/armadaevents"
 	proto "github.com/gogo/protobuf/proto"
 	types "github.com/gogo/protobuf/types"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
+	io "io"
 	v1 "k8s.io/api/core/v1"
 	resource "k8s.io/apimachinery/pkg/api/resource"
-
-	api "github.com/armadaproject/armada/pkg/api"
-	armadaevents "github.com/armadaproject/armada/pkg/armadaevents"
+	math "math"
+	math_bits "math/bits"
 )
 
 // Reference imports to suppress errors if they are not otherwise used.

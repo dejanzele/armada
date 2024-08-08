@@ -5,6 +5,7 @@ option csharp_namespace = "ArmadaProject.Io.ArmadaEvents";
 
 import "k8s.io/api/core/v1/generated.proto";
 import "k8s.io/api/networking/v1/generated.proto";
+import "k8s.io/api/batch/v1/generated.proto";
 import "google/protobuf/timestamp.proto";
 import "k8s.io/apimachinery/pkg/api/resource/generated.proto";
 import "internal/scheduler/schedulerobjects/schedulerobjects.proto";
@@ -178,6 +179,7 @@ message KubernetesMainObject {
     ObjectMeta objectMeta = 1;
     oneof object {
         PodSpecWithAvoidList pod_spec = 2;
+        JobSpecWithAvoidList job_spec = 3;
     }
 }
 
@@ -189,6 +191,7 @@ message KubernetesObject {
         k8s.io.api.networking.v1.IngressSpec ingress = 3;
         k8s.io.api.core.v1.ServiceSpec service = 4;
         k8s.io.api.core.v1.ConfigMap configMap = 5;
+        JobSpecWithAvoidList job_spec = 6;
     }
 }
 
@@ -210,12 +213,19 @@ message ObjectMeta {
     map<string, string> labels = 6;
 }
 
-// Kubernetes pod spec. with a bundled list of pods to avoid scheduling the pod to.
+// Kubernetes pod spec with a bundled list of nodes to avoid scheduling the pod to.
 message PodSpecWithAvoidList {
     k8s.io.api.core.v1.PodSpec pod_spec = 1;
     // List of nodes to avoid scheduling this pod on.
     // TODO: Could this be done with selectors, taints, etc?
     repeated string node_avoidlist = 2;
+}
+
+// Kubernetes job spec with a bundled list of nodes to avoid scheduling the job to.
+message JobSpecWithAvoidList {
+  k8s.io.api.batch.v1.JobSpec job_spec = 1;
+  // List of nodes to avoid scheduling this job on.
+  repeated string node_avoidlist = 2;
 }
 
 // Set the priority of a particular job.

@@ -3,6 +3,7 @@ package context
 import (
 	"encoding/json"
 	"fmt"
+	batchv1 "k8s.io/api/batch/v1"
 	"time"
 
 	"github.com/pkg/errors"
@@ -56,10 +57,12 @@ type ClusterContext interface {
 	GetEndpointSlices(namespace string, labelName string, labelValue string) ([]*discovery.EndpointSlice, error)
 
 	SubmitPod(pod *v1.Pod, owner string, ownerGroups []string) (*v1.Pod, error)
+	SubmitJob(job *batchv1.Job, owner string, ownerGroups []string) (*batchv1.Job, error)
 	SubmitService(service *v1.Service) (*v1.Service, error)
 	SubmitIngress(ingress *networking.Ingress) (*networking.Ingress, error)
 	DeletePodWithCondition(pod *v1.Pod, condition func(pod *v1.Pod) bool, pessimistic bool) error
 	DeletePods(pods []*v1.Pod)
+	DeleteJobs(jobs []*batchv1.Job)
 	DeleteService(service *v1.Service) error
 	DeleteIngress(ingress *networking.Ingress) error
 
@@ -74,6 +77,8 @@ type KubernetesClusterContext struct {
 	deleteThreadCount        int
 	submittedPods            util.PodCache
 	podsToDelete             util.PodCache
+	submittedJobs            util.JobCache
+	jobsToDelete             util.JobCache
 	podInformer              informer.PodInformer
 	nodeInformer             informer.NodeInformer
 	serviceInformer          informer.ServiceInformer
@@ -111,6 +116,8 @@ func NewClusterContext(
 		deleteThreadCount:        configuration.DeleteConcurrencyLimit,
 		submittedPods:            util.NewTimeExpiringPodCache(time.Minute, time.Second, "submitted_job"),
 		podsToDelete:             util.NewTimeExpiringPodCache(minTimeBetweenRepeatDeletionCalls, time.Second, "deleted_job"),
+		submittedJobs:            util.NewTimeExpiringJobCache(time.Minute, time.Second, "submitted_job_batchjob"),
+		jobsToDelete:             util.NewTimeExpiringJobCache(minTimeBetweenRepeatDeletionCalls, time.Second, "deleted_job_batchjob"),
 		stopper:                  make(chan struct{}),
 		podInformer:              factory.Core().V1().Pods(),
 		nodeInformer:             factory.Core().V1().Nodes(),
@@ -257,6 +264,20 @@ func (c *KubernetesClusterContext) SubmitPod(pod *v1.Pod, owner string, ownerGro
 	return returnedPod, err
 }
 
+func (c *KubernetesClusterContext) SubmitJob(job *batchv1.Job, owner string, ownerGroups []string) (*batchv1.Job, error) {
+	c.submittedJobs.Add(job)
+	ownerClient, err := c.kubernetesClientProvider.ClientForUser(owner, ownerGroups)
+	if err != nil {
+		return nil, err
+	}
+
+	returnedJob, err := ownerClient.BatchV1().Jobs(job.Namespace).Create(armadacontext.Background(), job, metav1.CreateOptions{})
+	if err != nil {
+		c.submittedJobs.Delete(util.ExtractJobKey(job))
+	}
+	return returnedJob, err
+}
+
 func (c *KubernetesClusterContext) SubmitService(service *v1.Service) (*v1.Service, error) {
 	return c.kubernetesClient.CoreV1().Services(service.Namespace).Create(armadacontext.Background(), service, metav1.CreateOptions{})
 }
@@ -341,6 +362,12 @@ func (c *KubernetesClusterContext) DeletePodWithCondition(pod *v1.Pod, condition
 func (c *KubernetesClusterContext) DeletePods(pods []*v1.Pod) {
 	for _, podToDelete := range pods {
 		c.podsToDelete.AddIfNotExists(podToDelete)
+	}
+}
+
+func (c *KubernetesClusterContext) DeleteJobs(jobs []*batchv1.Job) {
+	for _, jobToDelete := range jobs {
+		c.jobsToDelete.AddIfNotExists(jobToDelete)
 	}
 }
 

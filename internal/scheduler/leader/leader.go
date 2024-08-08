@@ -2,6 +2,7 @@ package leader
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -37,6 +38,10 @@ type LeaderReport struct {
 type LeaderToken struct {
 	leader bool
 	id     uuid.UUID
+}
+
+func (l LeaderToken) String() string {
+	return fmt.Sprintf("{leader: %v, id: %s}", l.leader, l.id)
 }
 
 func (l LeaderToken) Leader() bool {

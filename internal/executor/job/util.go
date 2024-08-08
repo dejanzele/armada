@@ -2,6 +2,7 @@ package job
 
 import (
 	"fmt"
+	batchv1 "k8s.io/api/batch/v1"
 
 	v1 "k8s.io/api/core/v1"
 
@@ -15,9 +16,19 @@ func CreateSubmitJobFromExecutorApiJobRunLease(
 	jobRunLease *executorapi.JobRunLease,
 	podDefaults *configuration.PodDefaults,
 ) (*SubmitJob, error) {
-	pod, err := util2.CreatePodFromExecutorApiJob(jobRunLease, podDefaults)
-	if err != nil {
-		return nil, err
+	var err error
+	var pod *v1.Pod
+	var job *batchv1.Job
+	if util2.HasJobSpec(jobRunLease) {
+		job, err = util2.CreateJobFromExecutorApiJob(jobRunLease, podDefaults)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		pod, err = util2.CreatePodFromExecutorApiJob(jobRunLease, podDefaults)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	jobId, err := armadaevents.UlidStringFromProtoUuid(jobRunLease.Job.JobId)
@@ -43,6 +54,7 @@ func CreateSubmitJobFromExecutorApiJobRunLease(
 			OwnershipGroups: jobRunLease.Groups,
 		},
 		Pod:       pod,
+		Job:       job,
 		Ingresses: util2.ExtractIngresses(jobRunLease, pod, podDefaults.Ingress),
 		Services:  util2.ExtractServices(jobRunLease, pod),
 	}, nil

@@ -29,6 +29,20 @@ func SubmitJobFromApiRequest(
 	priority := PriorityAsInt32(jobReq.GetPriority())
 	ingressesAndServices := convertIngressesAndServices(jobReq, jobIdStr, jobSetId, queue, owner)
 
+	var mainObject armadaevents.KubernetesMainObject
+	if jobSpec := jobReq.GetMainJobSpec(); jobSpec != nil {
+		mainObject.Object = &armadaevents.KubernetesMainObject_JobSpec{
+			JobSpec: &armadaevents.JobSpecWithAvoidList{
+				JobSpec: jobSpec,
+			},
+		}
+	} else {
+		mainObject.Object = &armadaevents.KubernetesMainObject_PodSpec{
+			PodSpec: &armadaevents.PodSpecWithAvoidList{
+				PodSpec: jobReq.GetMainPodSpec(),
+			},
+		}
+	}
 	msg := &armadaevents.SubmitJob{
 		JobId:           jobId,
 		JobIdStr:        jobIdStr,
@@ -39,15 +53,9 @@ func SubmitJobFromApiRequest(
 			Annotations: jobReq.GetAnnotations(),
 			Labels:      jobReq.GetLabels(),
 		},
-		MainObject: &armadaevents.KubernetesMainObject{
-			Object: &armadaevents.KubernetesMainObject_PodSpec{
-				PodSpec: &armadaevents.PodSpecWithAvoidList{
-					PodSpec: jobReq.GetMainPodSpec(),
-				},
-			},
-		},
-		Objects:   ingressesAndServices,
-		Scheduler: jobReq.Scheduler,
+		MainObject: &mainObject,
+		Objects:    ingressesAndServices,
+		Scheduler:  jobReq.Scheduler,
 	}
 	postProcess(msg, config)
 	return msg

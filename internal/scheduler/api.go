@@ -145,7 +145,13 @@ func (srv *ExecutorApi) LeaseJobRuns(stream executorapi.ExecutorApi_LeaseJobRuns
 
 		srv.addPreemptibleLabel(submitMsg)
 
-		srv.dropDisallowedResources(submitMsg.MainObject.GetPodSpec().PodSpec)
+		var podSpec *v1.PodSpec
+		if jobSpec := submitMsg.MainObject.GetJobSpec(); jobSpec != nil {
+			podSpec = &jobSpec.JobSpec.Template.Spec
+		} else {
+			podSpec = submitMsg.MainObject.GetPodSpec().PodSpec
+		}
+		srv.dropDisallowedResources(podSpec)
 
 		// This must happen after anything that relies on the priorityClassName
 		if srv.priorityClassNameOverride != nil {
@@ -196,16 +202,20 @@ func (srv *ExecutorApi) setPriorityClassName(job *armadaevents.SubmitJob, priori
 	if job.MainObject != nil {
 		switch typed := job.MainObject.Object.(type) {
 		case *armadaevents.KubernetesMainObject_PodSpec:
-			setPriorityClassName(typed.PodSpec, priorityClassName)
+			setPriorityClassName(typed.PodSpec.PodSpec, priorityClassName)
+		case *armadaevents.KubernetesMainObject_JobSpec:
+			if typed.JobSpec != nil && typed.JobSpec.JobSpec != nil {
+				setPriorityClassName(&typed.JobSpec.JobSpec.Template.Spec, priorityClassName)
+			}
 		}
 	}
 }
 
-func setPriorityClassName(podSpec *armadaevents.PodSpecWithAvoidList, priorityClassName string) {
-	if podSpec == nil || podSpec.PodSpec == nil {
+func setPriorityClassName(podSpec *v1.PodSpec, priorityClassName string) {
+	if podSpec == nil {
 		return
 	}
-	podSpec.PodSpec.PriorityClassName = priorityClassName
+	podSpec.PriorityClassName = priorityClassName
 }
 
 func (srv *ExecutorApi) addPreemptibleLabel(job *armadaevents.SubmitJob) {
@@ -246,6 +256,10 @@ func (srv *ExecutorApi) isPreemptible(job *armadaevents.SubmitJob) bool {
 			if typed.PodSpec != nil && typed.PodSpec.PodSpec != nil {
 				priorityClassName = typed.PodSpec.PodSpec.PriorityClassName
 			}
+		case *armadaevents.KubernetesMainObject_JobSpec:
+			if typed.JobSpec != nil && typed.JobSpec.JobSpec != nil {
+				priorityClassName = typed.JobSpec.JobSpec.Template.Spec.PriorityClassName
+			}
 		default:
 			return false
 		}
@@ -272,19 +286,25 @@ func (srv *ExecutorApi) addNodeIdSelector(job *armadaevents.SubmitJob, nodeId st
 	if job.MainObject != nil {
 		switch typed := job.MainObject.Object.(type) {
 		case *armadaevents.KubernetesMainObject_PodSpec:
-			addNodeSelector(typed.PodSpec, srv.nodeIdLabel, nodeId)
+			if typed.PodSpec != nil {
+				addNodeSelector(typed.PodSpec.PodSpec, srv.nodeIdLabel, nodeId)
+			}
+		case *armadaevents.KubernetesMainObject_JobSpec:
+			if typed.JobSpec != nil && typed.JobSpec.JobSpec != nil {
+				addNodeSelector(&typed.JobSpec.JobSpec.Template.Spec, srv.nodeIdLabel, nodeId)
+			}
 		}
 	}
 }
 
-func addNodeSelector(podSpec *armadaevents.PodSpecWithAvoidList, key string, value string) {
-	if podSpec == nil || podSpec.PodSpec == nil || key == "" || value == "" {
+func addNodeSelector(podSpec *v1.PodSpec, key string, value string) {
+	if podSpec == nil || key == "" || value == "" {
 		return
 	}
-	if podSpec.PodSpec.NodeSelector == nil {
-		podSpec.PodSpec.NodeSelector = map[string]string{key: value}
+	if podSpec.NodeSelector == nil {
+		podSpec.NodeSelector = map[string]string{key: value}
 	} else {
-		podSpec.PodSpec.NodeSelector[key] = value
+		podSpec.NodeSelector[key] = value
 	}
 }
 
@@ -297,6 +317,10 @@ func addTolerations(job *armadaevents.SubmitJob, tolerations []v1.Toleration) {
 		case *armadaevents.KubernetesMainObject_PodSpec:
 			if typed.PodSpec != nil && typed.PodSpec.PodSpec != nil {
 				typed.PodSpec.PodSpec.Tolerations = append(typed.PodSpec.PodSpec.Tolerations, tolerations...)
+			}
+		case *armadaevents.KubernetesMainObject_JobSpec:
+			if typed.JobSpec != nil && typed.JobSpec.JobSpec != nil {
+				typed.JobSpec.JobSpec.Template.Spec.Tolerations = append(typed.JobSpec.JobSpec.Template.Spec.Tolerations, tolerations...)
 			}
 		}
 	}

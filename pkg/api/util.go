@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	batchv1 "k8s.io/api/batch/v1"
 	"strings"
 
 	v1 "k8s.io/api/core/v1"
@@ -29,6 +30,33 @@ func JobRunStateFromApiJobState(s JobState) schedulerobjects.JobRunState {
 		return schedulerobjects.JobRunState_UNKNOWN
 	}
 	return schedulerobjects.JobRunState_UNKNOWN
+}
+
+func CalculateResourceRequirements(podSpec *v1.PodSpec, jobSpec *batchv1.JobSpec) v1.ResourceRequirements {
+	if podSpec == nil {
+		podSpec = &jobSpec.Template.Spec
+	}
+	requirements := v1.ResourceRequirements{}
+	if len(requirements.Requests) == 0 && len(requirements.Limits) == 0 {
+		requirements = SchedulingResourceRequirementsFromPodSpec(podSpec)
+	}
+	if jobSpec != nil {
+		parallelism := 1
+		if jobSpec.Parallelism != nil {
+			parallelism = int(*jobSpec.Parallelism)
+		}
+		for resource := range requirements.Requests {
+			quantity := requirements.Requests[resource]
+			quantity.Set(quantity.Value() * int64(parallelism))
+			requirements.Requests[resource] = quantity
+		}
+		for resource := range requirements.Limits {
+			quantity := requirements.Limits[resource]
+			quantity.Set(quantity.Value() * int64(parallelism))
+			requirements.Limits[resource] = quantity
+		}
+	}
+	return requirements
 }
 
 // SchedulingResourceRequirementsFromPodSpec returns resource requests and limits necessary for scheduling a pod.
@@ -87,12 +115,29 @@ func (job *Job) GetMainPodSpec() *v1.PodSpec {
 }
 
 func (job *JobSubmitRequestItem) GetMainPodSpec() *v1.PodSpec {
-	if job.PodSpec != nil {
+	switch {
+	case job.JobSpec != nil:
+		return &job.JobSpec.Template.Spec
+	case job.PodSpec != nil:
 		return job.PodSpec
-	} else if len(job.PodSpecs) > 0 {
+	case len(job.PodSpecs) > 0:
 		return job.PodSpecs[0]
+	case len(job.JobSpecs) > 0:
+		return &job.JobSpecs[0].Template.Spec
+	default:
+		return nil
 	}
-	return nil
+}
+
+func (job *JobSubmitRequestItem) GetMainJobSpec() *batchv1.JobSpec {
+	switch {
+	case job.JobSpec != nil:
+		return job.JobSpec
+	case len(job.JobSpecs) > 0:
+		return job.JobSpecs[0]
+	default:
+		return nil
+	}
 }
 
 func ShortStringFromEventMessages(msgs []*EventMessage) string {

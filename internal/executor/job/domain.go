@@ -1,6 +1,7 @@
 package job
 
 import (
+	batchv1 "k8s.io/api/batch/v1"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
@@ -16,6 +17,7 @@ type SubmitJobMeta struct {
 type SubmitJob struct {
 	Meta      SubmitJobMeta
 	Pod       *v1.Pod
+	Job       *batchv1.Job
 	Ingresses []*networking.Ingress
 	Services  []*v1.Service
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	batchv1 "k8s.io/api/batch/v1"
 	v1 "k8s.io/api/core/v1"
 	networking "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -93,20 +94,26 @@ func ApiJobFromLogSubmitJob(ownerId string, groups []string, queueName string, j
 		return nil, errors.Errorf("SubmitJob or one of its member pointers is nil")
 	}
 
-	// We only support PodSpecs as main object.
-	mainObject, ok := e.MainObject.Object.(*armadaevents.KubernetesMainObject_PodSpec)
-	if !ok {
-		return nil, errors.Errorf("expected *PodSpecWithAvoidList, but got %v", e.MainObject.Object)
-	}
-	podSpec := mainObject.PodSpec.PodSpec
-
 	// The job submit message contains a bag of additional k8s objects to create as part of the job.
 	// Currently, these must be of type pod spec, service spec, or ingress spec. These are stored in a single slice.
 	// Here, we separate them by type for inclusion in the API job.
 	k8sServices := make([]*v1.Service, 0)
 	k8sIngresses := make([]*networking.Ingress, 0)
 	k8sPodSpecs := make([]*v1.PodSpec, 0)
-	k8sPodSpecs = append(k8sPodSpecs, podSpec)
+	k8sJobSpecs := make([]*batchv1.JobSpec, 0)
+
+	// We only support PodSpecs or JobSpec as main object.
+	_, ok := e.MainObject.Object.(*armadaevents.KubernetesMainObject_JobSpec)
+	if !ok {
+		if podSpec, ok := e.MainObject.Object.(*armadaevents.KubernetesMainObject_PodSpec); !ok {
+			return nil, errors.Errorf("expected *PodSpecWithAvoidList or *JobSpecWithAvoidList, but got %v", e.MainObject.Object)
+		} else {
+			k8sPodSpecs = append(k8sPodSpecs, podSpec.PodSpec.PodSpec)
+		}
+	} else {
+		k8sJobSpecs = append(k8sJobSpecs, e.MainObject.GetJobSpec().JobSpec)
+	}
+
 	for _, object := range e.Objects {
 		k8sObjectMeta := *K8sObjectMetaFromLogObjectMeta(object.GetObjectMeta())
 		switch o := object.Object.(type) {
@@ -122,6 +129,8 @@ func ApiJobFromLogSubmitJob(ownerId string, groups []string, queueName string, j
 			})
 		case *armadaevents.KubernetesObject_PodSpec:
 			k8sPodSpecs = append(k8sPodSpecs, o.PodSpec.PodSpec)
+		case *armadaevents.KubernetesObject_JobSpec:
+			k8sJobSpecs = append(k8sJobSpecs, o.JobSpec.JobSpec)
 		default:
 			return nil, &armadaerrors.ErrInvalidArgument{
 				Name:    "Objects",
@@ -131,8 +140,16 @@ func ApiJobFromLogSubmitJob(ownerId string, groups []string, queueName string, j
 		}
 	}
 
+	var podSpec *v1.PodSpec
+	var jobSpec *batchv1.JobSpec
+	if len(k8sPodSpecs) > 0 {
+		podSpec = k8sPodSpecs[0]
+	}
+	if len(k8sJobSpecs) > 0 {
+		jobSpec = k8sJobSpecs[0]
+	}
 	// Compute the overall resource requirements necessary for scheduling.
-	schedulingResourceRequirements := api.SchedulingResourceRequirementsFromPodSpec(podSpec)
+	schedulingResourceRequirements := api.CalculateResourceRequirements(podSpec, jobSpec)
 
 	// If there's exactly one podSpec, put it in the PodSpec field, otherwise put all of them in the PodSpecs field.
 	// Because API jobs must specify either PodSpec or PodSpecs, this ensures that the job resulting from the conversion
@@ -162,6 +179,8 @@ func ApiJobFromLogSubmitJob(ownerId string, groups []string, queueName string, j
 
 		PodSpec:                        podSpec,
 		PodSpecs:                       podSpecs,
+		JobSpec:                        jobSpec,
+		JobSpecs:                       k8sJobSpecs,
 		SchedulingResourceRequirements: &schedulingResourceRequirements,
 
 		Created:                  protoutil.ToTimestamp(time),

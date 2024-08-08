@@ -2,6 +2,7 @@ package job
 
 import (
 	"fmt"
+	batchv1 "k8s.io/api/batch/v1"
 	"regexp"
 	"sync"
 
@@ -85,24 +86,46 @@ func (submitService *SubmitService) submitWorker(wg *sync.WaitGroup, jobsToSubmi
 	defer wg.Done()
 
 	for job := range jobsToSubmitChannel {
-		jobPods := []*v1.Pod{}
-		pod, err := submitService.submitPod(job)
-		jobPods = append(jobPods, pod)
+		if job.Job != nil {
+			var jobBatchJobs []*batchv1.Job
+			batchjob, err := submitService.submitJob(job)
+			jobBatchJobs = append(jobBatchJobs, batchjob)
 
-		if err != nil {
-			log.Errorf("Failed to submit job %s because %s", job.Meta.RunMeta.JobId, err)
+			if err != nil {
+				log.Errorf("Failed to submit job %s because %s", job.Meta.RunMeta.JobId, err)
 
-			errDetails := &FailedSubmissionDetails{
-				JobRunMeta:  job.Meta.RunMeta,
-				Pod:         pod,
-				Error:       err,
-				Recoverable: submitService.isRecoverable(err),
+				errDetails := &FailedSubmissionDetails{
+					JobRunMeta:  job.Meta.RunMeta,
+					Error:       err,
+					Recoverable: submitService.isRecoverable(err),
+				}
+
+				failedJobsChannel <- errDetails
+
+				// remove just created jobs
+				submitService.clusterContext.DeleteJobs(jobBatchJobs)
 			}
+		}
+		if job.Pod != nil {
+			var jobPods []*v1.Pod
+			pod, err := submitService.submitPod(job)
+			jobPods = append(jobPods, pod)
 
-			failedJobsChannel <- errDetails
+			if err != nil {
+				log.Errorf("Failed to submit job %s because %s", job.Meta.RunMeta.JobId, err)
 
-			// remove just created pods
-			submitService.clusterContext.DeletePods(jobPods)
+				errDetails := &FailedSubmissionDetails{
+					JobRunMeta:  job.Meta.RunMeta,
+					Pod:         pod,
+					Error:       err,
+					Recoverable: submitService.isRecoverable(err),
+				}
+
+				failedJobsChannel <- errDetails
+
+				// remove just created pods
+				submitService.clusterContext.DeletePods(jobPods)
+			}
 		}
 	}
 }
@@ -145,6 +168,51 @@ func (submitService *SubmitService) submitPod(job *SubmitJob) (*v1.Pod, error) {
 	}
 
 	return pod, err
+}
+
+// submitJob submits a job to k8s together with any services and ingresses bundled with the Armada job.
+// This function may fail partly, i.e., it may successfully create a subset of the requested objects before failing.
+// In case of failure, any already created objects are not cleaned up.
+func (submitService *SubmitService) submitJob(job *SubmitJob) (*batchv1.Job, error) {
+	batchjob := job.Job
+	// Ensure the K8SService and K8SIngress fields are populated
+	submitService.applyExecutorSpecificIngressDetails(job)
+
+	if len(job.Ingresses) > 0 || len(job.Services) > 0 {
+		batchjob.Annotations = util.MergeMaps(batchjob.Annotations, map[string]string{
+			domain.HasIngress:               "true",
+			domain.AssociatedServicesCount:  fmt.Sprintf("%d", len(job.Services)),
+			domain.AssociatedIngressesCount: fmt.Sprintf("%d", len(job.Ingresses)),
+		})
+		batchjob.Spec.Template.Annotations = util.MergeMaps(batchjob.Spec.Template.Annotations, map[string]string{
+			domain.HasIngress:               "true",
+			domain.AssociatedServicesCount:  fmt.Sprintf("%d", len(job.Services)),
+			domain.AssociatedIngressesCount: fmt.Sprintf("%d", len(job.Ingresses)),
+		})
+	}
+
+	submittedJob, err := submitService.clusterContext.SubmitJob(batchjob, job.Meta.Owner, job.Meta.OwnershipGroups)
+	if err != nil {
+		return batchjob, err
+	}
+
+	for _, service := range job.Services {
+		service.ObjectMeta.OwnerReferences = []metav1.OwnerReference{util2.CreateJobOwnerReference(submittedJob)}
+		_, err = submitService.clusterContext.SubmitService(service)
+		if err != nil {
+			return batchjob, err
+		}
+	}
+
+	for _, ingress := range job.Ingresses {
+		ingress.ObjectMeta.OwnerReferences = []metav1.OwnerReference{util2.CreateJobOwnerReference(submittedJob)}
+		_, err = submitService.clusterContext.SubmitIngress(ingress)
+		if err != nil {
+			return batchjob, err
+		}
+	}
+
+	return batchjob, err
 }
 
 // applyExecutorSpecificIngressDetails populates the executor specific details on ingresses

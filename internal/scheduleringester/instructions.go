@@ -462,6 +462,32 @@ func SchedulingInfoFromSubmitJob(submitJob *armadaevents.SubmitJob, submitTime t
 				},
 			},
 		)
+	case *armadaevents.KubernetesMainObject_JobSpec:
+		jobSpec := object.JobSpec.JobSpec
+		podSpec := &jobSpec.Template.Spec
+		schedulingInfo.PriorityClassName = podSpec.PriorityClassName
+		podRequirements := adapters.PodRequirementsFromJobSpec(jobSpec)
+		if submitJob.ObjectMeta != nil {
+			podRequirements.Annotations = maps.Clone(submitJob.ObjectMeta.Annotations)
+		}
+		if submitJob.MainObject.ObjectMeta != nil {
+			if podRequirements.Annotations == nil {
+				podRequirements.Annotations = make(map[string]string, len(submitJob.MainObject.ObjectMeta.Annotations))
+			}
+			for k, v := range submitJob.MainObject.ObjectMeta.Annotations {
+				if configuration.IsSchedulingAnnotation(k) {
+					podRequirements.Annotations[k] = v
+				}
+			}
+		}
+		schedulingInfo.ObjectRequirements = append(
+			schedulingInfo.ObjectRequirements,
+			&schedulerobjects.ObjectRequirements{
+				Requirements: &schedulerobjects.ObjectRequirements_PodRequirements{
+					PodRequirements: podRequirements,
+				},
+			},
+		)
 	default:
 		return nil, errors.Errorf("unsupported object type %T", object)
 	}

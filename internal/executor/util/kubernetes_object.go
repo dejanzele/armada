@@ -2,6 +2,7 @@ package util
 
 import (
 	"fmt"
+	batchv1 "k8s.io/api/batch/v1"
 	"strconv"
 	"strings"
 
@@ -161,6 +162,15 @@ func CreateOwnerReference(pod *v1.Pod) metav1.OwnerReference {
 	}
 }
 
+func CreateJobOwnerReference(job *batchv1.Job) metav1.OwnerReference {
+	return metav1.OwnerReference{
+		APIVersion: "batch/v1",
+		Kind:       "Job",
+		Name:       job.Name,
+		UID:        job.UID,
+	}
+}
+
 func ExtractIngresses(job *executorapi.JobRunLease, pod *v1.Pod, executorIngressConfig *configuration.IngressConfiguration) []*networking.Ingress {
 	result := make([]*networking.Ingress, 0, 10)
 
@@ -235,6 +245,19 @@ func ExtractServices(job *executorapi.JobRunLease, pod *v1.Pod) []*v1.Service {
 	return result
 }
 
+func HasJobSpec(job *executorapi.JobRunLease) bool {
+	hasMainObject := job != nil &&
+		job.Job != nil &&
+		job.Job.MainObject != nil &&
+		job.Job.MainObject.Object != nil
+	if hasMainObject {
+		if _, ok := job.Job.MainObject.Object.(*armadaevents.KubernetesMainObject_JobSpec); ok {
+			return true
+		}
+	}
+	return false
+}
+
 func CreatePodFromExecutorApiJob(job *executorapi.JobRunLease, defaults *configuration.PodDefaults) (*v1.Pod, error) {
 	podSpec, err := getPodSpec(job)
 	if err != nil {
@@ -277,6 +300,61 @@ func CreatePodFromExecutorApiJob(job *executorapi.JobRunLease, defaults *configu
 	return pod, nil
 }
 
+func CreateJobFromExecutorApiJob(job *executorapi.JobRunLease, defaults *configuration.PodDefaults) (*batchv1.Job, error) {
+	jobSpec, err := getJobSpec(job)
+	if err != nil {
+		return nil, err
+	}
+	jobId, err := armadaevents.UlidStringFromProtoUuid(job.Job.JobId)
+	if err != nil {
+		return nil, err
+	}
+	runId, err := armadaevents.UuidStringFromProtoUuid(job.JobRunId)
+	if err != nil {
+		return nil, err
+	}
+
+	labels := util.MergeMaps(job.Job.ObjectMeta.Labels, map[string]string{
+		domain.JobId:     jobId,
+		domain.JobRunId:  runId,
+		domain.Queue:     job.Queue,
+		domain.PodNumber: strconv.Itoa(0),
+		domain.PodCount:  strconv.Itoa(1),
+	})
+	annotation := util.MergeMaps(job.Job.ObjectMeta.Annotations, map[string]string{
+		domain.JobSetId: job.Jobset,
+		domain.Owner:    job.User,
+	})
+
+	podSpec := &jobSpec.Template.Spec
+	applyDefaults(podSpec, defaults)
+	setRestartPolicyNever(podSpec)
+	if jobSpec.Template.Labels == nil {
+		jobSpec.Template.Labels = make(map[string]string)
+	}
+	for key, value := range labels {
+		jobSpec.Template.Labels[key] = value
+	}
+	if jobSpec.Template.Annotations == nil {
+		jobSpec.Template.Annotations = make(map[string]string)
+	}
+	for key, value := range annotation {
+		jobSpec.Template.Annotations[key] = value
+	}
+
+	batchjob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        common.PodNamePrefix + jobId + "-" + strconv.Itoa(0),
+			Labels:      labels,
+			Annotations: annotation,
+			Namespace:   job.Job.ObjectMeta.Namespace,
+		},
+		Spec: *jobSpec,
+	}
+
+	return batchjob, nil
+}
+
 func getPodSpec(job *executorapi.JobRunLease) (*v1.PodSpec, error) {
 	if job == nil || job.Job == nil || job.Job.MainObject == nil {
 		return nil, fmt.Errorf("no podspec found in the main object - jobs must specify a podspec")
@@ -286,6 +364,17 @@ func getPodSpec(job *executorapi.JobRunLease) (*v1.PodSpec, error) {
 		return typed.PodSpec.PodSpec, nil
 	}
 	return nil, fmt.Errorf("no podspec found in the main object - jobs must specify a podspec")
+}
+
+func getJobSpec(job *executorapi.JobRunLease) (*batchv1.JobSpec, error) {
+	if job == nil || job.Job == nil || job.Job.MainObject == nil {
+		return nil, fmt.Errorf("no jobspec found in the main object - jobs must specify a jobspec")
+	}
+	switch typed := job.Job.MainObject.Object.(type) {
+	case *armadaevents.KubernetesMainObject_JobSpec:
+		return typed.JobSpec.JobSpec, nil
+	}
+	return nil, fmt.Errorf("no jobspec found in the main object - jobs must specify a jobspec")
 }
 
 func CreatePod(job *api.Job, defaults *configuration.PodDefaults) *v1.Pod {
