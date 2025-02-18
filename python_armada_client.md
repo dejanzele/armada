@@ -277,6 +277,38 @@ Retrieves the details of a job from Armada.
 
 
 
+#### get_job_errors(job_ids)
+Retrieves termination reason from query api.
+
+
+* **Parameters**
+
+    
+    * **queue** – The name of the queue
+
+
+    * **job_set_id** – The name of the job set (a grouping of jobs)
+
+
+    * **external_job_uri** – externalJobUri annotation value
+
+
+    * **job_ids** (*List**[**str**]*) – 
+
+
+
+* **Returns**
+
+    The response from the server containing the job errors.
+
+
+
+* **Return type**
+
+    JobErrorsResponse
+
+
+
 #### get_job_events_stream(queue, job_set_id, from_message_id=None)
 Get event stream for a job set.
 
@@ -362,6 +394,35 @@ Retrieves the status of a list of jobs from Armada.
 
 
 
+#### get_job_status_by_external_job_uri(queue, job_set_id, external_job_uri)
+Retrieves the status of a job based on externalJobUri annotation.
+
+
+* **Parameters**
+
+    
+    * **queue** (*str*) – The name of the queue
+
+
+    * **job_set_id** (*str*) – The name of the job set (a grouping of jobs)
+
+
+    * **external_job_uri** (*str*) – externalJobUri annotation value
+
+
+
+* **Returns**
+
+    The response from the server containing the job status.
+
+
+
+* **Return type**
+
+    JobStatusResponse
+
+
+
 #### get_queue(name)
 Get the queue by name.
 
@@ -383,6 +444,24 @@ Uses the GetQueue RPC to get the queue.
 * **Return type**
 
     armada.submit_pb2.Queue
+
+
+
+#### get_queues()
+Get all queues.
+
+Uses the GetQueues RPC to get the queues.
+
+
+* **Returns**
+
+    list containing all queues
+
+
+
+* **Return type**
+
+    *List*[armada.submit_pb2.Queue]
 
 
 
@@ -654,3 +733,59 @@ Convert this Subject to a grpc Subject.
 * **Return type**
 
     armada.submit_pb2.Subject
+
+
+## armada_client.log_client module
+
+
+### _class_ armada_client.log_client.JobLogClient(url, job_id, disable_ssl=False)
+Client for retrieving logs for a given job.
+
+
+* **Parameters**
+
+    
+    * **url** (*str*) – The url to use for retreiving logs.
+
+
+    * **job_id** (*str*) – The ID of the job.
+
+
+    * **disable_ssl** (*bool*) – 
+
+
+
+* **Returns**
+
+    A JobLogClient instance.
+
+
+
+#### logs(since_time='')
+Retrieve logs for the job associated with this client.
+
+
+* **Parameters**
+
+    **since_time** (*str** | **None*) – Logs will be retrieved starting at the time
+    specified in this str. Must conform to RFC3339 date time format.
+
+
+
+* **Returns**
+
+    A list of LogLine objects.
+
+
+
+### _class_ armada_client.log_client.LogLine(line, timestamp)
+Represents a single line from a log.
+
+
+* **Parameters**
+
+    
+    * **line** (*str*) – 
+
+
+    * **timestamp** (*str*) –
