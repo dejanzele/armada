@@ -92,5 +92,5 @@ type Run struct {
 	Queue                  string     `db:"queue"`
 	Pool                   string     `db:"pool"`
 	Terminated             bool       `db:"terminated"`
-	RunIndex               int64      `db:"run_index"`
+	RunIndex               *int64     `db:"run_index"`
 }
