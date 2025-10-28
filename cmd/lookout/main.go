@@ -147,6 +147,9 @@ func main() {
 
 	restapi.UIConfig = config.UIConfig
 
+	shutdownMetricServer := common.ServeMetrics(uint16(config.MetricsPort))
+	defer shutdownMetricServer()
+
 	if err := lookout.Serve(config); err != nil {
 		log.Error(err.Error())
 		os.Exit(1)
