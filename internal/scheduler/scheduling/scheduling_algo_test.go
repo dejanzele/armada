@@ -31,6 +31,101 @@ import (
 	"github.com/armadaproject/armada/pkg/api"
 )
 
+func TestSchedule_PoolFailureIsolation(t *testing.T) {
+	ctx := armadacontext.Background()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	schedulingConfig := testfixtures.TestSchedulingConfigWithPools([]configuration.PoolConfig{
+		{Name: "pool-1"},
+		{Name: "pool-2"},
+	})
+
+	executors := []*schedulerobjects.Executor{
+		makeTestExecutor("executor-1", "pool-1"),
+		makeTestExecutor("executor-2", "pool-2"),
+	}
+
+	mockExecutorRepo := schedulermocks.NewMockExecutorRepository(ctrl)
+
+	// Fail first pool, succeed on second
+	callCount := 0
+	mockExecutorRepo.EXPECT().GetExecutors(gomock.Any()).DoAndReturn(
+		func(ctx *armadacontext.Context) ([]*schedulerobjects.Executor, error) {
+			callCount++
+			if callCount == 1 {
+				return nil, fmt.Errorf("simulated failure for pool")
+			}
+			return executors, nil
+		},
+	).AnyTimes()
+
+	mockExecutorRepo.EXPECT().GetExecutorSettings(gomock.Any()).Return([]*schedulerobjects.ExecutorSettings{}, nil).AnyTimes()
+
+	queues := []*api.Queue{testfixtures.MakeTestQueue()}
+	mockQueueCache := schedulermocks.NewMockQueueCache(ctrl)
+	mockQueueCache.EXPECT().GetAll(gomock.Any()).Return(queues, nil).AnyTimes()
+
+	schedulingContextRepo := reports.NewSchedulingContextRepository()
+	sch, err := NewFairSchedulingAlgo(
+		schedulingConfig,
+		0,
+		mockExecutorRepo,
+		mockQueueCache,
+		schedulingContextRepo,
+		testfixtures.TestResourceListFactory,
+		testfixtures.TestEmptyFloatingResources,
+		priorityoverride.NewNoOpProvider(),
+		nil,
+	)
+	require.NoError(t, err)
+	sch.clock = clock.NewFakeClock(testfixtures.BaseTime)
+
+	queuedJobs := testfixtures.WithPools(
+		testfixtures.N16Cpu128GiJobs(testfixtures.TestQueue, testfixtures.PriorityClass3, 10),
+		[]string{"pool-1", "pool-2"},
+	)
+
+	jobDb := testfixtures.NewJobDb(testfixtures.TestResourceListFactory)
+	txn := jobDb.WriteTxn()
+
+	jobsToUpsert := make([]*jobdb.Job, 0)
+	for _, job := range queuedJobs {
+		jobsToUpsert = append(jobsToUpsert, job.WithQueued(true))
+	}
+	err = txn.Upsert(jobsToUpsert)
+	require.NoError(t, err)
+
+	// Schedule should not return error even though one pool failed
+	schedulerResult, err := sch.Schedule(ctx, nil, txn)
+	require.NoError(t, err)
+	require.NotNil(t, schedulerResult)
+
+	// Verify outcomes: pool-1 failed, pool-2 succeeded
+	require.Len(t, schedulerResult.PoolSchedulingOutcomes, 2)
+
+	outcomesByPool := make(map[string]PoolSchedulingOutcome)
+	for _, outcome := range schedulerResult.PoolSchedulingOutcomes {
+		outcomesByPool[outcome.Pool] = outcome
+	}
+
+	// Failed pool
+	assert.False(t, outcomesByPool["pool-1"].Success)
+	assert.Equal(t, PoolSchedulingErrorTypeContextCreation, outcomesByPool["pool-1"].ErrorType)
+	assert.Equal(t, PoolSchedulingTerminationReasonError, outcomesByPool["pool-1"].TerminationReason)
+	assert.NotNil(t, outcomesByPool["pool-1"].Error)
+
+	// Successful pool
+	assert.True(t, outcomesByPool["pool-2"].Success)
+
+	// Jobs scheduled only on successful pool
+	scheduledJobs := ScheduledJobsFromSchedulerResult(schedulerResult)
+	assert.NotEmpty(t, scheduledJobs)
+	for _, job := range scheduledJobs {
+		assert.Equal(t, "pool-2", job.LatestRun().Pool())
+	}
+}
+
 func TestSchedule(t *testing.T) {
 	multiPoolSchedulingConfig := testfixtures.TestSchedulingConfig()
 	defaultExecutorSettings := []*schedulerobjects.ExecutorSettings{}
