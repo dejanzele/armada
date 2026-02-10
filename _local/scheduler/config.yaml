@@ -22,5 +22,37 @@ postgres:
 scheduling:
   indexedNodeLabels:
     - "kubernetes.io/hostname"
+  retryPolicy:
+    enabled: true
+    globalMaxRetries: 5
+    # Default policy: no rules = everything fails immediately
+    default:
+      retryLimit: 3
+      rules: []
+    policies:
+      # ML training: retry OOMKilled only
+      ml-training:
+        retryLimit: 5
+        rules:
+          - action: Retry
+            onExitCodes:
+              operator: In
+              values: [137]
+      # Retry-all: traditional batch behavior (retry everything except success)
+      retry-all:
+        retryLimit: 5
+        rules:
+          - action: Retry
+            onExitCodes:
+              operator: NotIn
+              values: [0]
+      # High-retry: for testing global limit caps
+      high-retry:
+        retryLimit: 10
+        rules:
+          - action: Retry
+            onExitCodes:
+              operator: NotIn
+              values: [0]
 metrics:
   port: 9001

@@ -1,0 +1,49 @@
+# RETRY TEST: OOMKilled condition matching
+# Job triggers OOM on first attempt by allocating excess memory, succeeds on second
+# Expects: succeeded (proves retry mechanism worked)
+# Policy: retry-oom (retries on OOMKilled condition)
+numBatches: 1
+batchSize: 1
+queue: e2e-test-queue-retry-oom
+jobs:
+  - priority: 0
+    namespace: personal-anonymous
+    podSpec:
+      terminationGracePeriodSeconds: 0
+      restartPolicy: Never
+      containers:
+        - name: retry-oom-condition
+          imagePullPolicy: IfNotPresent
+          image: alpine:3.20.0
+          command:
+            - sh
+            - -c
+            - |
+              # Pod name format: armada-<jobId>-0-<runIndex>
+              RUN_INDEX=$(hostname | rev | cut -d'-' -f1 | rev)
+              echo "=== Retry OOMKilled Condition Test ==="
+              echo "Run index: $RUN_INDEX"
+
+              if [ "$RUN_INDEX" = "0" ]; then
+                echo "First attempt: triggering OOM by allocating excess memory"
+                # Allocate memory until OOM killed - this will exceed the 10Mi limit
+                # Using dd to create a large file in memory (tmpfs)
+                dd if=/dev/zero of=/dev/shm/oom_trigger bs=1M count=50 2>/dev/null
+                # If dd somehow completes, force OOM with tail
+                tail /dev/zero
+              else
+                echo "Retry attempt $RUN_INDEX: succeeding without OOM"
+                exit 0
+              fi
+          resources:
+            limits:
+              memory: 10Mi
+              cpu: 100m
+            requests:
+              memory: 10Mi
+              cpu: 100m
+---
+timeout: "180s"
+expectedEvents:
+  - submitted:
+  - succeeded:

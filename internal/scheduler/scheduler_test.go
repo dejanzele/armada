@@ -999,6 +999,8 @@ func TestScheduler_TestCycle(t *testing.T) {
 				schedulerMetrics,
 				pricing.NoopBidPriceProvider{},
 				[]string{},
+				nil,
+				nil,
 			)
 			require.NoError(t, err)
 			sched.EnableAssertions()
@@ -1191,6 +1193,8 @@ func TestRun(t *testing.T) {
 		schedulerMetrics,
 		pricing.NoopBidPriceProvider{},
 		[]string{},
+		nil,
+		nil,
 	)
 	require.NoError(t, err)
 	sched.EnableAssertions()
@@ -1382,6 +1386,8 @@ func TestJobPriceUpdates(t *testing.T) {
 				schedulerMetrics,
 				priceProvider,
 				tc.marketDrivenPools,
+				nil,
+				nil,
 			)
 			require.NoError(t, err)
 
@@ -1569,6 +1575,8 @@ func TestScheduler_TestSyncInitialState(t *testing.T) {
 				schedulerMetrics,
 				pricing.NoopBidPriceProvider{},
 				[]string{},
+				nil,
+				nil,
 			)
 			require.NoError(t, err)
 			sched.EnableAssertions()
@@ -1782,6 +1790,8 @@ func TestScheduler_TestSyncState(t *testing.T) {
 				schedulerMetrics,
 				pricing.NoopBidPriceProvider{},
 				[]string{},
+				nil,
+				nil,
 			)
 			require.NoError(t, err)
 			sched.EnableAssertions()
@@ -3121,6 +3131,8 @@ func TestCycleConsistency(t *testing.T) {
 					schedulerMetrics,
 					pricing.NoopBidPriceProvider{},
 					[]string{},
+					nil,
+					nil,
 				)
 				require.NoError(t, err)
 				scheduler.clock = testClock

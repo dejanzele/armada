@@ -123,6 +123,7 @@ func TestSchedule_PoolFailureIsolation(t *testing.T) {
 				priorityoverride.NewNoOpProvider(),
 				nil,
 				&testRunReconciler{},
+				nil, // retryEngine - use nil to fall back to legacy PreemptionRetry behavior
 			)
 			require.NoError(t, err)
 
@@ -867,6 +868,7 @@ func TestSchedule(t *testing.T) {
 				priorityoverride.NewNoOpProvider(),
 				nil,
 				runReconciler,
+				nil, // retryEngine - use nil to fall back to legacy PreemptionRetry behavior
 			)
 			require.NoError(t, err)
 

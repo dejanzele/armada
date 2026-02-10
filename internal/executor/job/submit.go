@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"regexp"
 	"sync"
+	"time"
 
 	"github.com/pkg/errors"
 	v1 "k8s.io/api/core/v1"
+	networking "k8s.io/api/networking/v1"
 	k8s_errors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -17,6 +19,15 @@ import (
 	"github.com/armadaproject/armada/internal/executor/context"
 	"github.com/armadaproject/armada/internal/executor/domain"
 	util2 "github.com/armadaproject/armada/internal/executor/util"
+)
+
+// When a job retries, the previous pod's deletion triggers async garbage collection
+// of owned resources (services/ingresses via OwnerReference). Creating new resources
+// may fail with AlreadyExists if GC hasn't completed. We use delete-then-create
+// with retries to handle this race condition.
+const (
+	serviceIngressMaxRetries = 3
+	serviceIngressRetryDelay = 100 * time.Millisecond
 )
 
 type Submitter interface {
@@ -130,7 +141,7 @@ func (submitService *SubmitService) submitPod(job *SubmitJob) (*v1.Pod, error) {
 
 	for _, service := range job.Services {
 		service.ObjectMeta.OwnerReferences = []metav1.OwnerReference{util2.CreateOwnerReference(submittedPod)}
-		_, err = submitService.clusterContext.SubmitService(service)
+		err = submitService.createServiceWithRetry(service)
 		if err != nil {
 			return pod, err
 		}
@@ -138,7 +149,7 @@ func (submitService *SubmitService) submitPod(job *SubmitJob) (*v1.Pod, error) {
 
 	for _, ingress := range job.Ingresses {
 		ingress.ObjectMeta.OwnerReferences = []metav1.OwnerReference{util2.CreateOwnerReference(submittedPod)}
-		_, err = submitService.clusterContext.SubmitIngress(ingress)
+		err = submitService.createIngressWithRetry(ingress)
 		if err != nil {
 			return pod, err
 		}
@@ -199,4 +210,60 @@ func (submitService *SubmitService) isRecoverable(err error) bool {
 	}
 
 	return false
+}
+
+// createServiceWithRetry creates a service with retry handling for GC race conditions.
+func (submitService *SubmitService) createServiceWithRetry(service *v1.Service) error {
+	return submitService.createWithRetry(
+		"service",
+		service.Namespace,
+		service.Name,
+		func() error { return submitService.clusterContext.DeleteService(service) },
+		func() error { _, err := submitService.clusterContext.SubmitService(service); return err },
+	)
+}
+
+// createIngressWithRetry creates an ingress with retry handling for GC race conditions.
+func (submitService *SubmitService) createIngressWithRetry(ingress *networking.Ingress) error {
+	return submitService.createWithRetry(
+		"ingress",
+		ingress.Namespace,
+		ingress.Name,
+		func() error { return submitService.clusterContext.DeleteIngress(ingress) },
+		func() error { _, err := submitService.clusterContext.SubmitIngress(ingress); return err },
+	)
+}
+
+// createWithRetry implements a delete-then-create pattern with retries to handle
+// race conditions when garbage collection is still running from a previous run.
+func (submitService *SubmitService) createWithRetry(
+	resourceType string,
+	namespace string,
+	name string,
+	deleteFn func() error,
+	createFn func() error,
+) error {
+	for attempt := 0; attempt < serviceIngressMaxRetries; attempt++ {
+		if err := deleteFn(); err != nil {
+			return errors.Wrapf(err, "failed to delete existing %s %s/%s", resourceType, namespace, name)
+		}
+
+		err := createFn()
+		if err == nil {
+			return nil
+		}
+
+		if !k8s_errors.IsAlreadyExists(err) {
+			return err
+		}
+
+		if attempt < serviceIngressMaxRetries-1 {
+			log.Warnf("%s %s/%s already exists after delete (attempt %d/%d), retrying after %v",
+				resourceType, namespace, name, attempt+1, serviceIngressMaxRetries, serviceIngressRetryDelay)
+			time.Sleep(serviceIngressRetryDelay)
+		}
+	}
+
+	return errors.Errorf("failed to create %s %s/%s: still exists after %d delete attempts",
+		resourceType, namespace, name, serviceIngressMaxRetries)
 }

@@ -22,6 +22,8 @@ import (
 	"github.com/armadaproject/armada/internal/scheduler/leader"
 	"github.com/armadaproject/armada/internal/scheduler/metrics"
 	"github.com/armadaproject/armada/internal/scheduler/pricing"
+	"github.com/armadaproject/armada/internal/scheduler/queue"
+	"github.com/armadaproject/armada/internal/scheduler/retry"
 	"github.com/armadaproject/armada/internal/scheduler/schedulerobjects"
 	"github.com/armadaproject/armada/internal/scheduler/scheduling"
 	schedulercontext "github.com/armadaproject/armada/internal/scheduler/scheduling/context"
@@ -89,6 +91,11 @@ type Scheduler struct {
 	// A list of the pools that are market driven
 	// Used to know which jobs need update when updating job prices
 	marketDrivenPools []string
+	// Retry policy engine for evaluating job failures.
+	// When enabled, provides fine-grained control over retry behavior.
+	retryEngine *retry.Engine
+	// Cache of queue configurations, used for looking up queue's retry policy.
+	queueCache queue.QueueCache
 }
 
 func NewScheduler(
@@ -109,6 +116,8 @@ func NewScheduler(
 	metrics *metrics.Metrics,
 	bidPriceProvider pricing.BidPriceProvider,
 	marketDrivenPools []string,
+	retryEngine *retry.Engine,
+	queueCache queue.QueueCache,
 ) (*Scheduler, error) {
 	return &Scheduler{
 		jobRepository:      jobRepository,
@@ -131,6 +140,8 @@ func NewScheduler(
 		runsSerial:         -1,
 		metrics:            metrics,
 		marketDrivenPools:  marketDrivenPools,
+		retryEngine:        retryEngine,
+		queueCache:         queueCache,
 	}, nil
 }
 
@@ -957,23 +968,51 @@ func (s *Scheduler) generateUpdateMessagesFromJob(ctx *armadacontext.Context, jo
 			events = append(events, jobSucceeded)
 		} else if lastRun.Failed() && !job.Queued() {
 			failFast := job.Annotations()[constants.FailFastAnnotation] == "true"
-			requeueJob := !failFast && lastRun.Returned() && job.NumAttempts() < s.maxAttemptedRuns
+			runError := jobRunErrors[lastRun.Id()]
 
-			if requeueJob && lastRun.RunAttempted() {
+			// Determine retry behavior
+			var requeueJob bool
+			var incrementFailureCount bool
+
+			if s.retryEngine != nil && s.retryEngine.Enabled() && !failFast {
+				// Use retry policy engine for fine-grained control
+				failureInfo := s.extractFailureInfo(runError)
+				queueRetryPolicy := s.getQueueRetryPolicy(ctx, job.Queue())
+				result := s.retryEngine.Evaluate(queueRetryPolicy, failureInfo, job.FailureCount(), job.NumAttempts())
+				ctx.Debugf("Retry policy for job %s: policy=%s, exitCode=%d, action=%v, shouldRequeue=%v",
+					job.Id(), queueRetryPolicy, failureInfo.GetExitCode(), result.Action, result.ShouldRequeue)
+				requeueJob = result.ShouldRequeue
+				incrementFailureCount = result.IncrementFailureCount
+			} else {
+				// Legacy behavior: only retry runs that were returned (preemption/eviction), not failed runs
+				requeueJob = !failFast && lastRun.Returned() && job.NumAttempts() < s.maxAttemptedRuns
+				incrementFailureCount = true
+			}
+
+			// Check if job is schedulable with anti-affinity before requeuing.
+			// Only apply anti-affinity for returned (preempted/evicted) runs where the node caused the failure.
+			// For retry policy-driven retries (exit codes, OOMKilled, etc.), don't add anti-affinity
+			// because the failure is application-level, not node-level.
+			useAntiAffinity := lastRun.Returned()
+			if requeueJob && lastRun.RunAttempted() && useAntiAffinity {
 				jobWithAntiAffinity, schedulable, err := s.addNodeAntiAffinitiesForAttemptedRunsIfSchedulable(ctx, job)
 				if err != nil {
 					return nil, errors.Errorf("unable to set node anti-affinity for job %s because %s", job.Id(), err)
+				}
+				if schedulable {
+					job = jobWithAntiAffinity
 				} else {
-					if schedulable {
-						job = jobWithAntiAffinity
-					} else {
-						// If job is not schedulable with anti-affinity added. Do not requeue it and let it fail.
-						requeueJob = false
-					}
+					// Job is not schedulable with anti-affinity added; let it fail.
+					requeueJob = false
 				}
 			}
 
 			if requeueJob {
+				// Increment failure count if the retry policy says to
+				if incrementFailureCount {
+					job = job.WithIncrementedFailureCount()
+				}
+
 				job = job.WithQueued(true)
 				job = job.WithQueuedVersion(job.QueuedVersion() + 1)
 
@@ -990,7 +1029,6 @@ func (s *Scheduler) generateUpdateMessagesFromJob(ctx *armadacontext.Context, jo
 
 				events = append(events, requeueJobEvent)
 			} else {
-				runError := jobRunErrors[lastRun.Id()]
 				if runError == nil {
 					return nil, errors.Errorf(
 						"no run error found for run %s (job id = %s), this must mean we're out of sync with the database",
@@ -1296,4 +1334,51 @@ func getGangNodeUniformityAnnotations(jctx *schedulercontext.JobSchedulingContex
 		constants.GangNodeUniformityLabelNameEnvVar:  jctx.GangNodeUniformityLabelName,
 		constants.GangNodeUniformityLabelValueEnvVar: jctx.GangNodeUniformityLabelValue,
 	}
+}
+
+// extractFailureInfo extracts structured failure information from the run error.
+// This is used by the retry policy engine to make fine-grained retry decisions.
+func (s *Scheduler) extractFailureInfo(runError *armadaevents.Error) *armadaevents.FailureInfo {
+	if runError == nil {
+		return nil
+	}
+
+	// Extract failure info from the error if present
+	if runError.FailureInfo != nil {
+		return runError.FailureInfo
+	}
+
+	// Fallback: construct a minimal FailureInfo from legacy error fields
+	// This handles the transition period before executors populate FailureInfo
+	info := &armadaevents.FailureInfo{}
+
+	// Check if the pod lease was returned (executor returned the job for requeue)
+	// PodLeaseReturned events are typically retryable - the pod couldn't be scheduled
+	if plr := runError.GetPodLeaseReturned(); plr != nil {
+		info.PodCheckRetryable = true // Lease returns are retryable by default
+		info.PodCheckMessage = plr.GetMessage()
+	}
+
+	return info
+}
+
+// getQueueRetryPolicy looks up the queue's retry policy name from the queue cache.
+// Returns empty string if queue not found or queue has no retry policy configured.
+func (s *Scheduler) getQueueRetryPolicy(ctx *armadacontext.Context, queueName string) string {
+	if s.queueCache == nil {
+		return ""
+	}
+
+	queues, err := s.queueCache.GetAll(ctx)
+	if err != nil {
+		return ""
+	}
+
+	for _, q := range queues {
+		if q.Name == queueName {
+			return q.RetryPolicy
+		}
+	}
+
+	return ""
 }

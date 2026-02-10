@@ -1,0 +1,45 @@
+# RETRY TEST: Exit code matching
+# Job exits with code 42 on first attempt, succeeds on second attempt
+# Expects: succeeded (proves retry mechanism worked)
+# Policy: retry-exit-42 (retries exit code 42)
+numBatches: 1
+batchSize: 1
+queue: e2e-test-queue-retry-exit42
+jobs:
+  - priority: 0
+    namespace: personal-anonymous
+    podSpec:
+      terminationGracePeriodSeconds: 0
+      restartPolicy: Never
+      containers:
+        - name: retry-exit-code
+          imagePullPolicy: IfNotPresent
+          image: alpine:3.20.0
+          command:
+            - sh
+            - -c
+            - |
+              # Pod name format: armada-<jobId>-0-<runIndex>
+              RUN_INDEX=$(hostname | rev | cut -d'-' -f1 | rev)
+              echo "=== Retry Exit Code Test ==="
+              echo "Run index: $RUN_INDEX"
+
+              if [ "$RUN_INDEX" = "0" ]; then
+                echo "First attempt: exiting with code 42 to trigger retry"
+                exit 42
+              else
+                echo "Retry attempt $RUN_INDEX: succeeding"
+                exit 0
+              fi
+          resources:
+            limits:
+              memory: 25Mi
+              cpu: 100m
+            requests:
+              memory: 25Mi
+              cpu: 100m
+---
+timeout: "120s"
+expectedEvents:
+  - submitted:
+  - succeeded:

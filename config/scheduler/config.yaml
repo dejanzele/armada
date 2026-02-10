@@ -107,6 +107,25 @@ scheduling:
   maximumPerQueueSchedulingBurst: 1000
   maxJobSchedulingContextsPerExecutor: 10000
   maxRetries: 3
+  # Retry policy provides fine-grained control over job retry behavior.
+  # When enabled, it takes precedence over maxRetries.
+  # Default behavior: all failures fail immediately (no retry).
+  # Add Retry rules to opt-in to retry behavior for specific conditions.
+  retryPolicy:
+    enabled: false  # Set to true to enable retry policy
+    globalMaxRetries: 20  # Hard cap on total retries across all policies
+    default:
+      retryLimit: 3
+      rules: []  # No rules = all failures fail immediately
+    # Named policies can be referenced by queue's retry_policy field
+    # policies:
+    #   ml-training:
+    #     retryLimit: 10
+    #     rules:
+    #       - action: Retry
+    #         onExitCodes:
+    #           operator: In
+    #           values: [137, 143]
   dominantResourceFairnessResourcesToConsider:
     - "cpu"
     - "memory"
