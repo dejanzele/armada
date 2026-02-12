@@ -2173,6 +2173,10 @@
             "$ref": "#/definitions/apiPriorityClassResourceLimits"
           }
         },
+        "retryPolicy": {
+          "description": "References a named retry policy from scheduler config.\nIf empty or policy not found, the default policy is used.",
+          "type": "string"
+        },
         "userOwners": {
           "type": "array",
           "items": {

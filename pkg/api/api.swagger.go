@@ -2184,6 +2184,10 @@ func SwaggerJsonTemplate() string {
 		"            \"$ref\": \"#/definitions/apiPriorityClassResourceLimits\"\n" +
 		"          }\n" +
 		"        },\n" +
+		"        \"retryPolicy\": {\n" +
+		"          \"description\": \"References a named retry policy from scheduler config.\\nIf empty or policy not found, the default policy is used.\",\n" +
+		"          \"type\": \"string\"\n" +
+		"        },\n" +
 		"        \"userOwners\": {\n" +
 		"          \"type\": \"array\",\n" +
 		"          \"items\": {\n" +
