@@ -8,6 +8,7 @@ import (
 	networking "k8s.io/api/networking/v1"
 
 	"github.com/armadaproject/armada/internal/common"
+	"github.com/armadaproject/armada/internal/common/constants"
 	log "github.com/armadaproject/armada/internal/common/logging"
 	armadaslices "github.com/armadaproject/armada/internal/common/slices"
 	"github.com/armadaproject/armada/internal/common/util"
@@ -29,13 +30,27 @@ func SubmitJobFromApiRequest(
 	priority := PriorityAsInt32(jobReq.GetPriority())
 	ingressesAndServices := convertIngressesAndServices(config, jobReq, jobId, jobSetId, queue, owner)
 
+	// Resolve externalJobUri: prefer the proto field, fall back to annotation.
+	annotations := jobReq.GetAnnotations()
+	externalJobUri := jobReq.GetExternalJobUri()
+	if externalJobUri == "" {
+		externalJobUri = annotations[constants.ExternalJobUriAnnotation]
+	}
+	// Mirror into annotation so old ingesters (that only read the annotation) still work during rolling deploys.
+	if externalJobUri != "" {
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+		annotations[constants.ExternalJobUriAnnotation] = externalJobUri
+	}
+
 	msg := &armadaevents.SubmitJob{
 		JobId:           jobId,
 		DeduplicationId: jobReq.GetClientId(),
 		Priority:        priority,
 		ObjectMeta: &armadaevents.ObjectMeta{
 			Namespace:   jobReq.GetNamespace(),
-			Annotations: jobReq.GetAnnotations(),
+			Annotations: annotations,
 			Labels:      jobReq.GetLabels(),
 		},
 		MainObject: &armadaevents.KubernetesMainObject{
@@ -45,8 +60,9 @@ func SubmitJobFromApiRequest(
 				},
 			},
 		},
-		Objects:   ingressesAndServices,
-		Scheduler: jobReq.Scheduler,
+		Objects:        ingressesAndServices,
+		Scheduler:      jobReq.Scheduler,
+		ExternalJobUri: externalJobUri,
 	}
 
 	postProcess(msg, config)

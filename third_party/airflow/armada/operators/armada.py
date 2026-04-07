@@ -633,6 +633,9 @@ Regex patterns will be extracted from container logs (taking first match).
             f"{self.job_set_prefix}{run_id}"
         )
 
-        request.annotations[annotation_key_prefix + "externalJobUri"] = (
-            external_job_uri(context)
-        )
+        uri = external_job_uri(context)
+        # Use the proto field when the client supports it; always set the
+        # annotation so older servers and ingesters still pick it up.
+        if hasattr(request, "external_job_uri"):
+            request.external_job_uri = uri
+        request.annotations[annotation_key_prefix + "externalJobUri"] = uri
