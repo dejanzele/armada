@@ -16,3 +16,11 @@ func UnschedulableTaint() v1.Taint {
 		Effect: unschedulableTaintEffect,
 	}
 }
+
+// IsCordonTaint reports whether taint marks a node as cordoned, i.e. temporarily not accepting new
+// jobs. This covers both the Armada-synthesized taint (added when a node reports unschedulable=true)
+// and the taint Kubernetes adds automatically on `kubectl cordon` (v1.TaintNodeUnschedulable).
+// A cordon is transient, so feasibility checks (e.g. the submit checker) should ignore these taints.
+func IsCordonTaint(taint v1.Taint) bool {
+	return taint.Key == unschedulableTaintKey || taint.Key == v1.TaintNodeUnschedulable
+}

@@ -154,6 +154,10 @@ func (srv *SubmitChecker) updateExecutors(ctx *armadacontext.Context) error {
 		nodes := nodeFactory.FromSchedulerObjectsExecutors(
 			[]*schedulerobjects.Executor{ex},
 			func(s string) { ctx.Error(s) })
+		// Treat cordoned nodes as available for the feasibility check. Cordoning is transient, so a
+		// job targeting a node type whose nodes are all cordoned should stay queued, not be rejected.
+		// See issue #4946.
+		nodes = nodeFactory.MarkAllSchedulable(nodes)
 		nodesByPool := armadaslices.GroupByFunc(nodes, func(n *internaltypes.Node) string {
 			return n.GetPool()
 		})

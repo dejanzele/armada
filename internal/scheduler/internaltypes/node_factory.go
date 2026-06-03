@@ -157,6 +157,56 @@ func (f *NodeFactory) AddTaints(nodes []*Node, extraTaints []v1.Taint) []*Node {
 	return result
 }
 
+// MarkAllSchedulable rebuilds nodes so they are treated as schedulable, clearing the unschedulable
+// flag and stripping cordon taints (see IsCordonTaint). It is used by the submit checker so that
+// jobs targeting a node type whose nodes are all cordoned (via `kubectl cordon` or `armadactl
+// cordon`) stay queued rather than being rejected. See issue #4946.
+//
+// Like AddTaints/AddLabels, this rebuilds via CreateNodeAndType so NodeType (used for nodeDb
+// indexing) is recomputed from the reduced taint set and stays consistent.
+func (f *NodeFactory) MarkAllSchedulable(nodes []*Node) []*Node {
+	result := make([]*Node, len(nodes))
+	for i, node := range nodes {
+		taints := node.GetTaints()
+		cordoned := node.IsUnschedulable()
+		if !cordoned {
+			for _, taint := range taints {
+				if IsCordonTaint(taint) {
+					cordoned = true
+					break
+				}
+			}
+		}
+		if !cordoned {
+			// Common case. Nodes are immutable, so reuse the node and skip recomputing its NodeType.
+			result[i] = node
+			continue
+		}
+		nonCordonTaints := make([]v1.Taint, 0, len(taints))
+		for _, taint := range taints {
+			if !IsCordonTaint(taint) {
+				nonCordonTaints = append(nonCordonTaints, taint)
+			}
+		}
+		result[i] = CreateNodeAndType(node.GetId(),
+			node.GetIndex(),
+			node.GetExecutor(),
+			node.GetName(),
+			node.GetPool(),
+			node.GetReportingNodeType(),
+			false,
+			nonCordonTaints,
+			node.GetLabels(),
+			f.indexedTaints,
+			f.indexedNodeLabels,
+			node.GetTotalResources(),
+			node.GetAllocatableResources(),
+			node.AllocatableByPriority,
+		)
+	}
+	return result
+}
+
 func (f *NodeFactory) allocateNodeIndex() uint64 {
 	return f.nodeIndexCounter.Add(1)
 }
