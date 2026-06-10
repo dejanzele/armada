@@ -9,13 +9,13 @@ permissions:
   contents: read
 
 jobs:
-  experiment:
+  bench:
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        variant: [control, mnt-data-root, free-disk-space]
+        run: [1, 2, 3, 4, 5, 6]
     env:
       ARMADA_EXECUTOR_INGRESS_URL: "http://localhost"
       ARMADA_EXECUTOR_INGRESS_PORT: 5001
@@ -26,35 +26,25 @@ jobs:
       - name: Baseline disk usage and start sampler
         run: |
           echo "=== baseline ==="
-          df -h / /mnt
-          nohup bash -c 'while true; do echo "$(date -u +%H:%M:%S) ROOT_AVAIL_MB=$(df -m --output=avail / | tail -1 | tr -d " ") MNT_AVAIL_MB=$(df -m --output=avail /mnt | tail -1 | tr -d " ")" >> /tmp/disk-samples.log; sleep 10; done' >/dev/null 2>&1 &
+          df -h /
+          df -m --output=size,avail / | tail -1
+          nohup bash -c 'while true; do echo "$(date -u +%H:%M:%S) ROOT_AVAIL_MB=$(df -m --output=avail / | tail -1 | tr -d " ")" >> /tmp/disk-samples.log; sleep 10; done' >/dev/null 2>&1 &
           echo "sampler started"
 
       - name: Free Disk Space (Ubuntu)
-        if: matrix.variant == 'free-disk-space'
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
         with:
           tool-cache: false
+          large-packages: false
           swap-storage: false
 
-      - name: Prepare /mnt for docker runtime
-        if: matrix.variant == 'mnt-data-root'
-        run: |
-          sudo mkdir -p /mnt/docker-runtime
-          sudo chmod 1777 /mnt/docker-runtime
+      - name: Disk after free step
+        run: df -h / && df -m --output=avail / | tail -1
 
       - name: Setup Docker
-        if: matrix.variant != 'mnt-data-root'
         uses: docker/setup-docker-action@1a6edb0ba9ac496f6850236981f15d8f9a82254d # v5
         with:
           daemon-config: '{"features":{"containerd-snapshotter":false}}'
-
-      - name: Setup Docker (runtime on /mnt)
-        if: matrix.variant == 'mnt-data-root'
-        uses: docker/setup-docker-action@1a6edb0ba9ac496f6850236981f15d8f9a82254d # v5
-        with:
-          daemon-config: '{"features":{"containerd-snapshotter":false}}'
-          runtime-basedir: /mnt/docker-runtime
 
       - run: docker buildx create --name ${DOCKER_BUILDX_BUILDER} --driver docker-container --use
       - run: docker buildx install
@@ -65,20 +55,11 @@ jobs:
           cache-prefix: airflow-integration-tests
           cache-tools: true
 
-      - name: Disk after toolchain setup
-        run: df -h / /mnt
-
       - name: Setup integration environment
         run: |
           mkdir -p .kube/internal
           mkdir -p .kube/external
           go run github.com/magefile/mage@v1.15.0 -v localdev minimal
-
-      - name: Disk after localdev minimal
-        if: always()
-        run: |
-          df -h / /mnt
-          docker system df || true
 
       - name: Install Protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
@@ -93,17 +74,10 @@ jobs:
         if: always()
         run: |
           echo "=== df ==="
-          df -h / /mnt
+          df -h /
           echo "=== docker system df ==="
           docker system df || true
-          echo "=== big dirs under /home/runner ==="
-          sudo du -x -m -d1 /home/runner 2>/dev/null | sort -rn | head -15 || true
-          echo "=== docker runtime dir ==="
-          sudo du -x -m -d2 /home/runner/setup-docker-action 2>/dev/null | sort -rn | head -10 || true
-          sudo du -x -m -d2 /mnt/docker-runtime 2>/dev/null | sort -rn | head -10 || true
-          echo "=== go caches and dist ==="
-          du -m -s "$(go env GOCACHE)" 2>/dev/null || true
-          du -m -s "$(go env GOMODCACHE)" 2>/dev/null || true
-          du -m -s dist 2>/dev/null || true
           echo "=== disk availability timeline (MB) ==="
           cat /tmp/disk-samples.log || true
+          echo "=== min avail ==="
+          grep -o 'ROOT_AVAIL_MB=[0-9]*' /tmp/disk-samples.log | sed 's/.*=//' | sort -n | head -1
