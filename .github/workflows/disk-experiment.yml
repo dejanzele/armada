@@ -9,13 +9,15 @@ permissions:
   contents: read
 
 jobs:
-  bench:
+  small-runner-sim:
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        run: [1, 2, 3, 4, 5, 6]
+        # 17 = what a 73GB runner has at job start (no fix, expected FAIL)
+        # 36 = what a 73GB runner has after the free-disk-space step (fix, expected PASS)
+        target-free-gb: [17, 36]
     env:
       ARMADA_EXECUTOR_INGRESS_URL: "http://localhost"
       ARMADA_EXECUTOR_INGRESS_PORT: 5001
@@ -27,19 +29,19 @@ jobs:
         run: |
           echo "=== baseline ==="
           df -h /
-          df -m --output=size,avail / | tail -1
           nohup bash -c 'while true; do echo "$(date -u +%H:%M:%S) ROOT_AVAIL_MB=$(df -m --output=avail / | tail -1 | tr -d " ")" >> /tmp/disk-samples.log; sleep 10; done' >/dev/null 2>&1 &
           echo "sampler started"
 
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-        with:
-          tool-cache: false
-          large-packages: false
-          swap-storage: false
-
-      - name: Disk after free step
-        run: df -h / && df -m --output=avail / | tail -1
+      - name: Ballast disk down to simulate 73GB runner scenario
+        run: |
+          TARGET_MB=$(( ${{ matrix.target-free-gb }} * 1024 ))
+          AVAIL_MB=$(df -m --output=avail / | tail -1 | tr -d ' ')
+          BALLAST=$(( AVAIL_MB - TARGET_MB ))
+          if [ "$BALLAST" -gt 0 ]; then
+            sudo fallocate -l ${BALLAST}M /ballast
+          fi
+          echo "=== after ballast ==="
+          df -h /
 
       - name: Setup Docker
         uses: docker/setup-docker-action@1a6edb0ba9ac496f6850236981f15d8f9a82254d # v5
