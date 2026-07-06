@@ -377,11 +377,33 @@ service QueueService {
 }
 
 service RetryPolicyService {
-    rpc CreateRetryPolicy(RetryPolicy) returns (google.protobuf.Empty);
-    rpc UpdateRetryPolicy(RetryPolicy) returns (google.protobuf.Empty);
-    rpc DeleteRetryPolicy(RetryPolicyDeleteRequest) returns (google.protobuf.Empty);
-    rpc GetRetryPolicy(RetryPolicyGetRequest) returns (RetryPolicy);
-    rpc GetRetryPolicies(RetryPolicyListRequest) returns (RetryPolicyList);
+    rpc CreateRetryPolicy(RetryPolicy) returns (google.protobuf.Empty) {
+        option (google.api.http) = {
+            post: "/v1/retry-policy"
+            body: "*"
+        };
+    }
+    rpc UpdateRetryPolicy(RetryPolicy) returns (google.protobuf.Empty) {
+        option (google.api.http) = {
+            put: "/v1/retry-policy/{name}"
+            body: "*"
+        };
+    }
+    rpc DeleteRetryPolicy(RetryPolicyDeleteRequest) returns (google.protobuf.Empty) {
+        option (google.api.http) = {
+            delete: "/v1/retry-policy/{name}"
+        };
+    }
+    rpc GetRetryPolicy(RetryPolicyGetRequest) returns (RetryPolicy) {
+        option (google.api.http) = {
+            get: "/v1/retry-policy/{name}"
+        };
+    }
+    rpc GetRetryPolicies(RetryPolicyListRequest) returns (RetryPolicyList) {
+        option (google.api.http) = {
+            get: "/v1/retry-policies"
+        };
+    }
 }
 
 service Submit {
@@ -453,33 +475,6 @@ service Submit {
       option (google.api.http) = {
         get: "/v1/batched/queues"
       };
-    }
-    rpc CreateRetryPolicy(RetryPolicy) returns (google.protobuf.Empty) {
-        option (google.api.http) = {
-            post: "/v1/retry-policy"
-            body: "*"
-        };
-    }
-    rpc UpdateRetryPolicy(RetryPolicy) returns (google.protobuf.Empty) {
-        option (google.api.http) = {
-            put: "/v1/retry-policy/{name}"
-            body: "*"
-        };
-    }
-    rpc DeleteRetryPolicy(RetryPolicyDeleteRequest) returns (google.protobuf.Empty) {
-        option (google.api.http) = {
-            delete: "/v1/retry-policy/{name}"
-        };
-    }
-    rpc GetRetryPolicy(RetryPolicyGetRequest) returns (RetryPolicy) {
-        option (google.api.http) = {
-            get: "/v1/retry-policy/{name}"
-        };
-    }
-    rpc GetRetryPolicies(RetryPolicyListRequest) returns (RetryPolicyList) {
-        option (google.api.http) = {
-            get: "/v1/retry-policies"
-        };
     }
     rpc Health(google.protobuf.Empty) returns (HealthCheckResponse);
 }

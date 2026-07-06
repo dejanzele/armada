@@ -13,16 +13,18 @@ jobs:
           image: alpine:3.20.0
           command: ["sh", "-c"]
           args:
-            # The pod reads the run-index label set by the executor (commit 3)
-            # via the downward API. Run 0 exits 1 to trigger the retry policy;
-            # run 1 exits 0. A succeeded terminal event is therefore only
-            # possible if (a) the engine decided to retry, (b) the run-index
-            # was correctly incremented, (c) the new pod name was unique, and
-            # (d) the label was set on the retry pod.
+            # The pod reads the run-index label set by the executor via the
+            # downward API. First attempts carry no label at all (the executor
+            # only stamps the index for retried runs), so an empty read means
+            # attempt zero: exit 1 to trigger the retry policy. A retried pod
+            # sees index >= 1 and succeeds. A succeeded terminal event is
+            # therefore only possible if (a) the engine decided to retry,
+            # (b) the run-index was incremented, (c) the new pod name was
+            # unique, and (d) the label was set on the retry pod.
             - |
               run_index=$(cat /podinfo/run_index)
               echo "run_index=$run_index"
-              if [ "$run_index" = "0" ]; then
+              if [ -z "$run_index" ] || [ "$run_index" = "0" ]; then
                 echo "first attempt: failing intentionally to trigger retry"
                 exit 1
               fi

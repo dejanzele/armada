@@ -5,8 +5,27 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+
 	"github.com/armadaproject/armada/internal/common/armadacontext"
+	"github.com/armadaproject/armada/internal/scheduler/metrics"
 	"github.com/armadaproject/armada/pkg/api"
+)
+
+var (
+	cacheRefreshFailuresCounter = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: metrics.ArmadaSchedulerMetricsPrefix + "retry_policy_cache_refresh_failures_total",
+			Help: "Number of failed retry policy cache refreshes. The cache fails open, so failures leave the previously cached policies in place.",
+		},
+	)
+	cacheLastSuccessfulRefreshGauge = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: metrics.ArmadaSchedulerMetricsPrefix + "retry_policy_cache_last_successful_refresh_seconds",
+			Help: "Unix timestamp of the last successful retry policy cache refresh, for alerting on cache staleness.",
+		},
+	)
 )
 
 // PolicyCache is the read-side interface the scheduler uses to look up
@@ -74,6 +93,7 @@ func (c *ApiPolicyCache) fetch(ctx *armadacontext.Context) error {
 	start := time.Now()
 	resp, err := c.apiClient.GetRetryPolicies(ctx, &api.RetryPolicyListRequest{})
 	if err != nil {
+		cacheRefreshFailuresCounter.Inc()
 		return fmt.Errorf("get retry policies: %w", err)
 	}
 	compiled := make(map[string]*Policy, len(resp.RetryPolicies))
@@ -87,6 +107,7 @@ func (c *ApiPolicyCache) fetch(ctx *armadacontext.Context) error {
 		compiled[p.Name] = policy
 	}
 	c.policies.Store(&compiled)
+	cacheLastSuccessfulRefreshGauge.SetToCurrentTime()
 	ctx.Infof("Refreshed %d retry policies in %s", len(compiled), time.Since(start))
 	return nil
 }

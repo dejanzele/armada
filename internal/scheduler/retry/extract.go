@@ -32,6 +32,10 @@ func extractCondition(err *armadaevents.Error) string {
 		return errormatch.ConditionPreempted
 	case *armadaevents.Error_PodLeaseReturned:
 		return errormatch.ConditionLeaseReturned
+	case *armadaevents.Error_LeaseExpired:
+		// An expired lease means the executor was lost, so policies can match
+		// it the same way they match node loss via lease return.
+		return errormatch.ConditionLeaseExpired
 	default:
 		return ""
 	}

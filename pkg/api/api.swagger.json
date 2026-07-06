@@ -683,7 +683,7 @@
     "/v1/retry-policies": {
       "get": {
         "tags": [
-          "Submit"
+          "RetryPolicyService"
         ],
         "operationId": "GetRetryPolicies",
         "responses": {
@@ -705,7 +705,7 @@
     "/v1/retry-policy": {
       "post": {
         "tags": [
-          "Submit"
+          "RetryPolicyService"
         ],
         "operationId": "CreateRetryPolicy",
         "parameters": [
@@ -735,7 +735,7 @@
     "/v1/retry-policy/{name}": {
       "get": {
         "tags": [
-          "Submit"
+          "RetryPolicyService"
         ],
         "operationId": "GetRetryPolicy",
         "parameters": [
@@ -763,7 +763,7 @@
       },
       "put": {
         "tags": [
-          "Submit"
+          "RetryPolicyService"
         ],
         "operationId": "UpdateRetryPolicy",
         "parameters": [
@@ -797,7 +797,7 @@
       },
       "delete": {
         "tags": [
-          "Submit"
+          "RetryPolicyService"
         ],
         "operationId": "DeleteRetryPolicy",
         "parameters": [

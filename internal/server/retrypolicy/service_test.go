@@ -16,25 +16,39 @@ import (
 	"github.com/armadaproject/armada/internal/server/permissions"
 	"github.com/armadaproject/armada/internal/server/servertest"
 	"github.com/armadaproject/armada/pkg/api"
+	"github.com/armadaproject/armada/pkg/client/queue"
 )
 
+// fakeQueueLister is a stub QueueLister for exercising the delete-time
+// referential check without a real queue repository.
+type fakeQueueLister struct {
+	queues []queue.Queue
+	err    error
+}
+
+func (f *fakeQueueLister) GetAllQueues(_ *armadacontext.Context) ([]queue.Queue, error) {
+	return f.queues, f.err
+}
+
 type testMocks struct {
-	authorizer *servermocks.MockActionAuthorizer
-	repo       *servermocks.MockRetryPolicyRepository
+	authorizer  *servermocks.MockActionAuthorizer
+	repo        *servermocks.MockRetryPolicyRepository
+	queueLister *fakeQueueLister
 }
 
 func newTestServer(t *testing.T) (*Server, *testMocks) {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	m := &testMocks{
-		authorizer: servermocks.NewMockActionAuthorizer(ctrl),
-		repo:       servermocks.NewMockRetryPolicyRepository(ctrl),
+		authorizer:  servermocks.NewMockActionAuthorizer(ctrl),
+		repo:        servermocks.NewMockRetryPolicyRepository(ctrl),
+		queueLister: &fakeQueueLister{},
 	}
-	s := NewServer(m.repo, m.authorizer)
+	s := NewServer(m.repo, m.queueLister, m.authorizer)
 	return s, m
 }
 
-// validPolicy returns a minimal proto that passes retry.ConvertPolicy, so tests
+// validPolicy returns a minimal proto that passes ValidatePolicy, so tests
 // targeting downstream behaviour aren't rejected at the upfront validation step.
 func validPolicy(name string) *api.RetryPolicy {
 	return &api.RetryPolicy{
@@ -119,9 +133,9 @@ func TestCreateRetryPolicy_InvalidPolicyRejected(t *testing.T) {
 		Return(nil).
 		Times(1)
 
-	// DefaultAction defaults to RETRY_ACTION_UNSPECIFIED, which ConvertPolicy
-	// rejects. No repo expectation is set: gomock fails if the repository is
-	// called.
+	// DefaultAction defaults to RETRY_ACTION_UNSPECIFIED and no rules are set,
+	// which ValidatePolicy rejects. No repo expectation is set: gomock fails
+	// if the repository is called.
 	_, err := s.CreateRetryPolicy(ctx, &api.RetryPolicy{Name: "p1"})
 	require.Error(t, err)
 	servertest.RequireGrpcCode(t, err, codes.InvalidArgument)
@@ -285,6 +299,79 @@ func TestDeleteRetryPolicy_Success(t *testing.T) {
 
 	_, err := s.DeleteRetryPolicy(ctx, &api.RetryPolicyDeleteRequest{Name: "p1"})
 	require.NoError(t, err)
+}
+
+func TestDeleteRetryPolicy_ReferencedByQueues(t *testing.T) {
+	tests := map[string]struct {
+		queues        []queue.Queue
+		wantInMessage []string
+		notInMessage  []string
+	}{
+		"single referencing queue": {
+			queues: []queue.Queue{
+				{Name: "queue-a", RetryPolicy: "p1"},
+				{Name: "queue-b", RetryPolicy: "other"},
+				{Name: "queue-c"},
+			},
+			wantInMessage: []string{"queue-a"},
+			notInMessage:  []string{"queue-b", "queue-c"},
+		},
+		"more referencing queues than the reporting cap": {
+			queues: []queue.Queue{
+				{Name: "q1", RetryPolicy: "p1"},
+				{Name: "q2", RetryPolicy: "p1"},
+				{Name: "q3", RetryPolicy: "p1"},
+				{Name: "q4", RetryPolicy: "p1"},
+				{Name: "q5", RetryPolicy: "p1"},
+				{Name: "q6", RetryPolicy: "p1"},
+			},
+			wantInMessage: []string{"6 queue(s)", "q1", "q5"},
+			notInMessage:  []string{"q6"},
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			s, m := newTestServer(t)
+			ctx := armadacontext.Background()
+
+			m.authorizer.
+				EXPECT().
+				AuthorizeAction(ctx, permission.Permission(permissions.DeleteRetryPolicy)).
+				Return(nil).
+				Times(1)
+
+			// No repo delete expectation: gomock fails the test if the
+			// repository is called despite live references.
+			m.queueLister.queues = tc.queues
+
+			_, err := s.DeleteRetryPolicy(ctx, &api.RetryPolicyDeleteRequest{Name: "p1"})
+			require.Error(t, err)
+			servertest.RequireGrpcCode(t, err, codes.FailedPrecondition)
+			for _, want := range tc.wantInMessage {
+				assert.Contains(t, err.Error(), want)
+			}
+			for _, notWant := range tc.notInMessage {
+				assert.NotContains(t, err.Error(), notWant)
+			}
+		})
+	}
+}
+
+func TestDeleteRetryPolicy_QueueListError(t *testing.T) {
+	s, m := newTestServer(t)
+	ctx := armadacontext.Background()
+
+	m.authorizer.
+		EXPECT().
+		AuthorizeAction(ctx, permission.Permission(permissions.DeleteRetryPolicy)).
+		Return(nil).
+		Times(1)
+
+	m.queueLister.err = errors.New("postgres down")
+
+	_, err := s.DeleteRetryPolicy(ctx, &api.RetryPolicyDeleteRequest{Name: "p1"})
+	require.Error(t, err)
+	servertest.RequireGrpcCode(t, err, codes.Unavailable)
 }
 
 func TestGetRetryPolicy_EmptyName(t *testing.T) {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -10,11 +11,13 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/armadaproject/armada/internal/common/armadacontext"
 	"github.com/armadaproject/armada/internal/common/auth"
 	"github.com/armadaproject/armada/internal/common/cluster"
 	log "github.com/armadaproject/armada/internal/common/logging"
+	"github.com/armadaproject/armada/internal/executor/domain"
 	"github.com/armadaproject/armada/pkg/api/binoculars"
 )
 
@@ -25,7 +28,8 @@ type LogService interface {
 type LogParams struct {
 	Principal  auth.Principal
 	Namespace  string
-	PodName    string
+	JobId      string
+	PodNumber  int32
 	SinceTime  string
 	LogOptions *v1.PodLogOptions
 }
@@ -51,7 +55,7 @@ func (l *KubernetesLogService) GetLogs(ctx *armadacontext.Context, params *LogPa
 		params.LogOptions.SinceTime = &metav1.Time{Time: since}
 	} else {
 		if params.SinceTime != "" {
-			log.Warnf("failed to parse since time for pod %s: %v", params.PodName, err)
+			log.Warnf("failed to parse since time for job %s: %v", params.JobId, err)
 		}
 	}
 
@@ -64,9 +68,14 @@ func (l *KubernetesLogService) GetLogs(ctx *armadacontext.Context, params *LogPa
 		params.Namespace = "default"
 	}
 
+	podName, err := resolvePodName(ctx, client, params.Namespace, params.JobId, params.PodNumber)
+	if err != nil {
+		return nil, err
+	}
+
 	req := client.CoreV1().
 		Pods(params.Namespace).
-		GetLogs(params.PodName, params.LogOptions)
+		GetLogs(podName, params.LogOptions)
 
 	result := req.Do(ctx)
 	if err := result.Error(); err != nil {
@@ -86,11 +95,54 @@ func (l *KubernetesLogService) GetLogs(ctx *armadacontext.Context, params *LogPa
 		log.Errorf(
 			"failed to parse log line for namespace: %q, pod: %q: %v",
 			params.Namespace,
-			params.PodName,
+			podName,
 			err)
 	}
 
 	return logLines, nil
+}
+
+// resolvePodName finds the pod belonging to a job via the labels the executor
+// stamps on every pod. Pod names can no longer be derived from the job id
+// alone: retried runs carry a run-index suffix in their name.
+func resolvePodName(ctx *armadacontext.Context, client kubernetes.Interface, namespace string, jobId string, podNumber int32) (string, error) {
+	selector := fmt.Sprintf("%s=%s,%s=%d", domain.JobId, jobId, domain.PodNumber, podNumber)
+	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return "", fmt.Errorf("failed to list pods for job %s: %w", jobId, err)
+	}
+	if len(pods.Items) == 0 {
+		return "", status.Error(codes.NotFound, "The pod with these logs doesn't exist - this is likely because the job has finished and the pod has been cleaned up")
+	}
+	return selectLatestAttempt(pods.Items).Name, nil
+}
+
+// selectLatestAttempt picks the most recent attempt when several attempts of
+// the same job coexist, e.g. while a predecessor pod is stuck terminating.
+// Pods without a run-index label are first attempts (index 0). Creation
+// timestamp breaks ties, since indexes are strictly increasing per job this
+// only matters for pods predating the run-index label.
+func selectLatestAttempt(pods []v1.Pod) *v1.Pod {
+	best := &pods[0]
+	bestIndex := podRunIndex(best)
+	for i := 1; i < len(pods); i++ {
+		candidate := &pods[i]
+		candidateIndex := podRunIndex(candidate)
+		if candidateIndex > bestIndex ||
+			(candidateIndex == bestIndex && candidate.CreationTimestamp.After(best.CreationTimestamp.Time)) {
+			best = candidate
+			bestIndex = candidateIndex
+		}
+	}
+	return best
+}
+
+func podRunIndex(pod *v1.Pod) uint64 {
+	index, err := strconv.ParseUint(pod.Labels[domain.JobRunIndex], 10, 32)
+	if err != nil {
+		return 0
+	}
+	return index
 }
 
 func ConvertLogs(rawLog []byte) ([]*binoculars.LogLine, []error) {

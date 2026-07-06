@@ -7,6 +7,8 @@ import (
 	"github.com/gogo/protobuf/types"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"golang.org/x/exp/slices"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/utils/clock"
@@ -31,6 +33,28 @@ import (
 	schedulercontext "github.com/armadaproject/armada/internal/scheduler/scheduling/context"
 	"github.com/armadaproject/armada/internal/scheduler/scheduling/runner"
 	"github.com/armadaproject/armada/pkg/armadaevents"
+)
+
+var (
+	// retryPolicyGangSkippedCounter counts gang jobs that would have been
+	// evaluated by the retry engine (their queue has a policy attached) but
+	// were skipped because gang retry is not supported.
+	retryPolicyGangSkippedCounter = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "armada_scheduler_retry_policy_gang_skipped_total",
+			Help: "Number of gang job failures skipped by the retry policy engine because gang retry is unsupported, for queues with a retry policy attached.",
+		},
+		[]string{"queue"},
+	)
+	// retryPolicyDecisionsCounter counts every retry engine verdict, labeled
+	// by which gate produced it (see retry.Decision for the label values).
+	retryPolicyDecisionsCounter = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "armada_scheduler_retry_policy_decisions_total",
+			Help: "Retry policy engine decisions by queue, policy and decision outcome.",
+		},
+		[]string{"queue", "policy", "decision"},
+	)
 )
 
 // Scheduler is the main Armada scheduler.
@@ -787,6 +811,27 @@ func createEventsForRetryingPreemption(
 			},
 		},
 		{
+			// The terminal run-scoped error is what marks the run terminated in
+			// the scheduler DB. Without it the executor never sees the run in
+			// its cancellation list, so the preempted pod keeps running next to
+			// the retried one.
+			Created: protoutil.ToTimestamp(time),
+			Event: &armadaevents.EventSequence_Event_JobRunErrors{
+				JobRunErrors: &armadaevents.JobRunErrors{
+					RunId: runId,
+					JobId: jobId,
+					Errors: []*armadaevents.Error{
+						{
+							Terminal: true,
+							Reason: &armadaevents.Error_JobRunPreemptedError{
+								JobRunPreemptedError: &armadaevents.JobRunPreemptedError{Reason: reason},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
 			Created: protoutil.ToTimestamp(time),
 			Event: &armadaevents.EventSequence_Event_JobErrors{
 				JobErrors: &armadaevents.JobErrors{
@@ -809,6 +854,53 @@ func createEventsForRetryingPreemption(
 					JobId:                jobId,
 					SchedulingInfo:       schedulingInfo,
 					UpdateSequenceNumber: queuedVersion,
+				},
+			},
+		},
+	}
+}
+
+// createEventsForLeaseExpiredRetry emits the same event shape the failed-run
+// retry path uses: a non-terminal JobErrors so the api stream surfaces the
+// lease expiry with retryable=true, followed by JobRequeued so the job is
+// re-leased instead of terminally failed.
+func createEventsForLeaseExpiredRetry(job *jobdb.Job, leaseExpiredError *armadaevents.Error, time time.Time) []*armadaevents.EventSequence_Event {
+	return []*armadaevents.EventSequence_Event{
+		{
+			// Terminate the expired run in the DB so a returning executor is
+			// told to cancel it instead of treating it as still active.
+			Created: protoutil.ToTimestamp(time),
+			Event: &armadaevents.EventSequence_Event_JobRunErrors{
+				JobRunErrors: &armadaevents.JobRunErrors{
+					RunId:  job.LatestRun().Id(),
+					JobId:  job.Id(),
+					Errors: []*armadaevents.Error{leaseExpiredError},
+				},
+			},
+		},
+		{
+			Created: protoutil.ToTimestamp(time),
+			Event: &armadaevents.EventSequence_Event_JobErrors{
+				JobErrors: &armadaevents.JobErrors{
+					JobId: job.Id(),
+					Errors: []*armadaevents.Error{
+						{
+							Terminal:           false,
+							Reason:             leaseExpiredError.Reason,
+							FailureCategory:    leaseExpiredError.FailureCategory,
+							FailureSubcategory: leaseExpiredError.FailureSubcategory,
+						},
+					},
+				},
+			},
+		},
+		{
+			Created: protoutil.ToTimestamp(time),
+			Event: &armadaevents.EventSequence_Event_JobRequeued{
+				JobRequeued: &armadaevents.JobRequeued{
+					JobId:                job.Id(),
+					SchedulingInfo:       internaltypes.ToSchedulerObjectsJobSchedulingInfo(job.JobSchedulingInfo()),
+					UpdateSequenceNumber: job.QueuedVersion(),
 				},
 			},
 		},
@@ -963,15 +1055,22 @@ func (s *Scheduler) evaluateRetryPolicy(
 	runError *armadaevents.Error,
 	queueRetryPolicies map[string]string,
 ) (shouldRetry bool, reason string, decided bool) {
-	// Gang retry is out of scope for this MVP: atomic gang restart needs
-	// per-gang failure aggregation and a synchronised run-index bump across
-	// all members. See notes/retry-policy/gang-retry.md. Until that lands,
-	// gang failures fall through to the legacy lease-return retry path.
+	policyName := queueRetryPolicies[job.Queue()]
+
+	// Gang retry is deliberately unsupported: retrying a single member would
+	// either deadlock the QueuedGangIterator waiting for full cardinality or
+	// silently shrink the gang, so a single decision per gang is required
+	// and that aggregation is deferred. Gang failures fall through to the
+	// legacy lease-return retry path.
+	// TODO(dejanzele): gang-aware retry tracked in #4683.
 	if job.IsInGang() {
+		if policyName != "" {
+			ctx.Infof("skipping retry policy %q for gang job %s in queue %s: gang retry is not supported", policyName, job.Id(), job.Queue())
+			retryPolicyGangSkippedCounter.WithLabelValues(job.Queue()).Inc()
+		}
 		return false, "", false
 	}
 
-	policyName := queueRetryPolicies[job.Queue()]
 	if policyName == "" {
 		return false, "", false
 	}
@@ -986,12 +1085,12 @@ func (s *Scheduler) evaluateRetryPolicy(
 		return false, "", false
 	}
 
-	// Pass FailureCount for both the policy and global tallies: counting
-	// len(AllRuns()) would also include preempted-but-not-failed runs (the
-	// scheduling algo creates a fresh run on reschedule), burning global-cap
-	// budget without any actual retry attempt.
-	failureCount := job.FailureCount()
-	result := s.retryEngine.Evaluate(policy, runError, failureCount, uint(failureCount))
+	result := s.retryEngine.Evaluate(policy, runError, retry.Counts{
+		Failures:    job.FailureCount(),
+		Preemptions: job.PreemptionCount(),
+		TotalRuns:   uint(len(job.AllRuns())),
+	})
+	retryPolicyDecisionsCounter.WithLabelValues(job.Queue(), policyName, string(result.Decision)).Inc()
 	ctx.Infof("retry decision for job %s queue=%s policy=%s: ShouldRetry=%v Reason=%q",
 		job.Id(), job.Queue(), policyName, result.ShouldRetry, result.Reason)
 	return result.ShouldRetry, result.Reason, true
@@ -1016,6 +1115,18 @@ func (s *Scheduler) applyRetryPolicyToAlgoPreemptions(
 	}
 	for _, jctx := range result.GetAllPreemptedJobs() {
 		job := jctx.Job
+		run := job.LatestRun()
+		if run == nil {
+			// The events helper errors on runless preempted jobs; nothing to evaluate here.
+			continue
+		}
+		// Mark the run preempted, in addition to failed which the algo
+		// already set, before consulting the engine: PreemptionCount() must
+		// include the run being evaluated or the policy retry limit is
+		// off-by-one, and FailureCount() must exclude it so the failure
+		// budget is untouched. The mutation is only persisted on retry; on
+		// no-retry the algo's terminal state is left exactly as it was.
+		job = job.WithUpdatedRun(run.WithPreempted(true))
 		shouldRetry, _, decided := s.evaluateRetryPolicy(ctx, job, newPreemptedRunError(jctx.PreemptionDescription), queueRetryPolicies)
 		if !decided || !shouldRetry {
 			continue
@@ -1204,19 +1315,20 @@ func (s *Scheduler) generateUpdateMessagesFromJob(ctx *armadacontext.Context, jo
 				}
 			}
 
-			// Anti-affinity is a legacy LeaseReturned mechanism: if a node
-			// misbehaves, retry elsewhere. Engine-driven retries are
-			// semantic (e.g. exit-code 42); pinning the job off the failing
-			// node would defeat single-node dev clusters and policies that
-			// target transient app errors. Skip it when the engine decided.
-			if requeueJob && !policyEngineDecided && lastRun.RunAttempted() {
+			// Anti-affinity steers the retry away from nodes the job already
+			// failed on. The legacy path fails the job when the anti-affinity
+			// makes it unschedulable; engine-driven retries instead fall back
+			// to requeueing without the anti-affinity, because a semantic
+			// retry (e.g. on exit code 42) must still be possible on
+			// single-node clusters where every node has been attempted.
+			if requeueJob && lastRun.RunAttempted() {
 				jobWithAntiAffinity, schedulable, err := s.addNodeAntiAffinitiesForAttemptedRunsIfSchedulable(ctx, job)
 				if err != nil {
 					return nil, errors.Errorf("unable to set node anti-affinity for job %s because %s", job.Id(), err)
 				} else {
 					if schedulable {
 						job = jobWithAntiAffinity
-					} else {
+					} else if !policyEngineDecided {
 						// If job is not schedulable with anti-affinity added. Do not requeue it and let it fail.
 						requeueJob = false
 					}
@@ -1326,42 +1438,48 @@ func (s *Scheduler) generateUpdateMessagesFromJob(ctx *armadacontext.Context, jo
 
 				events = append(events, jobErrors)
 			}
-		} else if lastRun.PreemptRequested() && job.PriorityClass().Preemptible && !lastRun.Failed() {
-			// `!lastRun.Failed()` is the dedupe guard. preempt_requested stays
-			// true even after a retry-driven re-lease (it only clears on
-			// terminal). We mark the run failed below; failed survives
-			// reconciliation (enforceTerminalStateExclusivity prefers Failed
-			// over Preempted), so a re-fired branch on the next cycle reads
-			// Failed=true and skips. Preempted=true on the run lands via the
-			// ingester from the JobRunPreempted event we emit.
+		} else if lastRun.PreemptRequested() && job.PriorityClass().Preemptible && (!s.retryPolicyConfig.Enabled || !lastRun.Failed()) {
 			reason := "Preempted - preemption requested via API"
 			if lastRun.PreemptReason() != nil && *lastRun.PreemptReason() != "" {
 				reason = *lastRun.PreemptReason()
 			}
 
-			// Mark the run failed before consulting the engine so the
-			// engine's FailureCount() includes the run being evaluated.
-			// Without this, the first preemption sees FailureCount=0
-			// instead of 1 and the policy retry limit is off-by-one. The
-			// algo-preempt path doesn't need this because the scheduling
-			// algorithm marks the run failed before its post-pass runs.
-			job = job.WithUpdatedRun(lastRun.WithoutTerminal().WithFailed(true))
+			if s.retryPolicyConfig.Enabled {
+				// `!lastRun.Failed()` in the branch condition is the dedupe
+				// guard, only active with the feature flag on. preempt_requested
+				// stays true even after a retry-driven re-lease (it only clears
+				// on terminal). We mark the run failed below; failed survives
+				// reconciliation (enforceTerminalStateExclusivity prefers Failed
+				// over Preempted), so a re-fired branch on the next cycle reads
+				// Failed=true and skips.
+				//
+				// Mark the run failed and preempted before consulting the
+				// engine so the engine's tallies include the run being
+				// evaluated: PreemptionCount() must count this preemption or
+				// the policy retry limit is off-by-one, and FailureCount()
+				// must exclude it so the failure budget is untouched.
+				job = job.WithUpdatedRun(lastRun.WithoutTerminal().WithFailed(true).WithPreempted(true))
 
-			// Synthesise a JobRunPreemptedError so policies with
-			// `onConditions: ["Preempted"]` match. The run is dead either
-			// way; only the job-level retry vs terminal-fail is engine-driven.
-			shouldRetry, _, decided := s.evaluateRetryPolicy(ctx, job, newPreemptedRunError(reason), queueRetryPolicies)
+				// Synthesise a JobRunPreemptedError so policies with
+				// `onConditions: ["Preempted"]` match. The run is dead either
+				// way; only the job-level retry vs terminal-fail is engine-driven.
+				shouldRetry, _, decided := s.evaluateRetryPolicy(ctx, job, newPreemptedRunError(reason), queueRetryPolicies)
 
-			if decided && shouldRetry {
-				job = job.WithQueued(true).WithQueuedVersion(job.QueuedVersion() + 1)
-				events = append(events, createEventsForRetryingPreemption(
-					job.Id(), lastRun.Id(), reason,
-					internaltypes.ToSchedulerObjectsJobSchedulingInfo(job.JobSchedulingInfo()),
-					job.QueuedVersion(),
-					s.clock.Now(),
-				)...)
+				if decided && shouldRetry {
+					job = job.WithQueued(true).WithQueuedVersion(job.QueuedVersion() + 1)
+					events = append(events, createEventsForRetryingPreemption(
+						job.Id(), lastRun.Id(), reason,
+						internaltypes.ToSchedulerObjectsJobSchedulingInfo(job.JobSchedulingInfo()),
+						job.QueuedVersion(),
+						s.clock.Now(),
+					)...)
+				} else {
+					job = job.WithQueued(false).WithFailed(true)
+					events = append(events, createEventsForPreemptedJob(job.Id(), lastRun.Id(), "", reason, s.clock.Now())...)
+				}
 			} else {
-				job = job.WithQueued(false).WithFailed(true)
+				// Feature flag off: identical to the pre-feature behaviour.
+				job = job.WithQueued(false).WithFailed(true).WithUpdatedRun(lastRun.WithoutTerminal().WithFailed(true))
 				events = append(events, createEventsForPreemptedJob(job.Id(), lastRun.Id(), "", reason, s.clock.Now())...)
 			}
 			s.metrics.ReportJobPreemptedWithType(job, schedulercontext.PreemptedViaApi)
@@ -1419,6 +1537,10 @@ func (s *Scheduler) expireJobsIfNecessary(ctx *armadacontext.Context, txn *jobdb
 
 	events := make([]*armadaevents.EventSequence, 0)
 
+	// Resolved once per expiry sweep; nil when the feature flag is off, in
+	// which case every expired job takes the terminal path below.
+	queueRetryPolicies := s.buildQueueRetryPolicyMap(ctx)
+
 	jobs := txn.GetAllLeasedJobs()
 
 	for _, job := range jobs {
@@ -1429,11 +1551,6 @@ func (s *Scheduler) expireJobsIfNecessary(ctx *armadacontext.Context, txn *jobdb
 
 		run := job.LatestRun()
 		if run != nil && !job.Queued() && staleExecutors[run.Executor()] {
-			ctx.Warnf("Cancelling job %s as it is running on lost executor %s", job.Id(), run.Executor())
-			expiredJob := job.WithQueued(false).WithFailed(true).WithUpdatedRun(run.WithFailed(true))
-			s.shortJobPenalty.ReportFinishedJob(expiredJob)
-			jobsToUpdate = append(jobsToUpdate, expiredJob)
-
 			leaseExpiredError := &armadaevents.Error{
 				Terminal:           true,
 				FailureCategory:    errormatch.CategoryInternal,
@@ -1442,6 +1559,31 @@ func (s *Scheduler) expireJobsIfNecessary(ctx *armadacontext.Context, txn *jobdb
 					LeaseExpired: &armadaevents.LeaseExpired{},
 				},
 			}
+
+			if s.retryPolicyConfig.Enabled {
+				// Mark the run failed before consulting the engine so the
+				// tallies include the run being evaluated. evaluateRetryPolicy
+				// skips gang jobs internally, so gangs always take the
+				// terminal path below.
+				jobWithFailedRun := job.WithUpdatedRun(run.WithFailed(true))
+				if shouldRetry, _, decided := s.evaluateRetryPolicy(ctx, jobWithFailedRun, leaseExpiredError, queueRetryPolicies); decided && shouldRetry {
+					ctx.Infof("Requeueing job %s from lost executor %s per retry policy", job.Id(), run.Executor())
+					retriedJob := jobWithFailedRun.WithQueued(true).WithQueuedVersion(job.QueuedVersion() + 1)
+					jobsToUpdate = append(jobsToUpdate, retriedJob)
+					events = append(events, &armadaevents.EventSequence{
+						Queue:      job.Queue(),
+						JobSetName: job.Jobset(),
+						Events:     createEventsForLeaseExpiredRetry(retriedJob, leaseExpiredError, s.clock.Now()),
+					})
+					continue
+				}
+			}
+
+			ctx.Warnf("Cancelling job %s as it is running on lost executor %s", job.Id(), run.Executor())
+			expiredJob := job.WithQueued(false).WithFailed(true).WithUpdatedRun(run.WithFailed(true))
+			s.shortJobPenalty.ReportFinishedJob(expiredJob)
+			jobsToUpdate = append(jobsToUpdate, expiredJob)
+
 			es := &armadaevents.EventSequence{
 				Queue:      job.Queue(),
 				JobSetName: job.Jobset(),

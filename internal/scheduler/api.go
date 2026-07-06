@@ -51,8 +51,8 @@ type ExecutorApi struct {
 	// See scheduling schedulingConfig.
 	priorityClassNameOverride *string
 	// Retry policy config; when Enabled is true, the executor api populates the
-	// optional JobRunIndex field on outgoing JobRunLease messages so the
-	// executor can disambiguate retry attempts by pod name.
+	// optional JobRunIndex field on outgoing JobRunLease messages for retried
+	// attempts (run index > 0) so the executor can give them fresh pod names.
 	retryPolicy configuration.RetryPolicyConfig
 	clock       clock.Clock
 	authorizer  auth.ActionAuthorizer
@@ -184,10 +184,11 @@ func (srv *ExecutorApi) LeaseJobRuns(stream executorapi.ExecutorApi_LeaseJobRuns
 			Groups:   groups,
 			Job:      submitMsg,
 		}
-		// Only populate JobRunIndex when the retry policy engine is enabled,
-		// otherwise the executor falls back to the legacy pod-name format. The
-		// optional field uses explicit presence so a value of 0 is meaningful.
-		if srv.retryPolicy.Enabled {
+		// First attempts (index 0) keep the legacy pod name forever, so
+		// flipping the retry-policy flag never renames existing-style pods.
+		// Only genuinely retried attempts (index > 0) need a fresh name, to
+		// avoid colliding with a stuck terminating predecessor pod.
+		if srv.retryPolicy.Enabled && lease.RunIndex > 0 {
 			jobRunLease.JobRunIndex = &types.UInt32Value{Value: lease.RunIndex}
 		}
 		err := stream.Send(&executorapi.LeaseStreamMessage{

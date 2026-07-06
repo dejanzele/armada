@@ -529,7 +529,6 @@ func createTestServer(t *testing.T) (*Server, *mockObjects) {
 	m := createMocks(t)
 	server := NewServer(
 		nil,
-		nil,
 		m.publisher,
 		m.queueRepo,
 		testfixtures.DefaultSubmissionConfig(),

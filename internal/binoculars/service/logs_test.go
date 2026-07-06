@@ -4,8 +4,19 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/armadaproject/armada/internal/common/armadacontext"
+	"github.com/armadaproject/armada/internal/executor/domain"
 )
 
 func TestConvertLogs_ReturnsLogLineWithTime(t *testing.T) {
@@ -105,4 +116,95 @@ func TestConvertLogs_LargerThanMaxBytesTruncatesLogs(t *testing.T) {
 
 	assert.Len(t, logLines, nLines, fmt.Sprintf("should be %d, is %d", nLines, len(logLines)))
 	assert.Len(t, errs, 0)
+}
+
+func TestResolvePodName(t *testing.T) {
+	const jobId = "01hqv6y6z8w9x0y1z2a3b4c5d6"
+	baseTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	makePod := func(name string, runIndexLabel string, created time.Time) *v1.Pod {
+		labels := map[string]string{
+			domain.JobId:     jobId,
+			domain.PodNumber: "0",
+		}
+		if runIndexLabel != "" {
+			labels[domain.JobRunIndex] = runIndexLabel
+		}
+		return &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              name,
+				Namespace:         "test-ns",
+				Labels:            labels,
+				CreationTimestamp: metav1.Time{Time: created},
+			},
+		}
+	}
+
+	tests := map[string]struct {
+		pods            []*v1.Pod
+		expectedPodName string
+		expectNotFound  bool
+	}{
+		"no pods returns not found": {
+			pods:           []*v1.Pod{},
+			expectNotFound: true,
+		},
+		"single legacy pod without run index label": {
+			pods:            []*v1.Pod{makePod("armada-"+jobId+"-0", "", baseTime)},
+			expectedPodName: "armada-" + jobId + "-0",
+		},
+		"highest run index wins over creation time": {
+			pods: []*v1.Pod{
+				makePod("armada-"+jobId+"-0-2", "2", baseTime),
+				makePod("armada-"+jobId+"-0-1", "1", baseTime.Add(time.Hour)),
+			},
+			expectedPodName: "armada-" + jobId + "-0-2",
+		},
+		"labelled retry wins over unlabelled first attempt": {
+			pods: []*v1.Pod{
+				makePod("armada-"+jobId+"-0", "", baseTime.Add(time.Hour)),
+				makePod("armada-"+jobId+"-0-1", "1", baseTime),
+			},
+			expectedPodName: "armada-" + jobId + "-0-1",
+		},
+		"equal run index falls back to newest creation timestamp": {
+			pods: []*v1.Pod{
+				makePod("pod-old", "", baseTime),
+				makePod("pod-new", "", baseTime.Add(time.Minute)),
+			},
+			expectedPodName: "pod-new",
+		},
+		"pods of other jobs are ignored": {
+			pods: []*v1.Pod{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "other-job-pod",
+						Namespace: "test-ns",
+						Labels:    map[string]string{domain.JobId: "other-job", domain.PodNumber: "0"},
+					},
+				},
+				makePod("armada-"+jobId+"-0", "", baseTime),
+			},
+			expectedPodName: "armada-" + jobId + "-0",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			objects := make([]runtime.Object, 0, len(tc.pods))
+			for _, pod := range tc.pods {
+				objects = append(objects, pod)
+			}
+			client := fake.NewSimpleClientset(objects...)
+			ctx := armadacontext.Background()
+
+			podName, err := resolvePodName(ctx, client, "test-ns", jobId, 0)
+			if tc.expectNotFound {
+				require.Error(t, err)
+				assert.Equal(t, codes.NotFound, status.Code(err))
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.expectedPodName, podName)
+		})
+	}
 }

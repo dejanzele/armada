@@ -72,10 +72,18 @@ func TestExtractCondition(t *testing.T) {
 			},
 			expected: errormatch.ConditionLeaseReturned,
 		},
-		"unrecognized error type": {
+		"LeaseExpired": {
 			err: &armadaevents.Error{
 				Reason: &armadaevents.Error_LeaseExpired{
 					LeaseExpired: &armadaevents.LeaseExpired{},
+				},
+			},
+			expected: errormatch.ConditionLeaseExpired,
+		},
+		"unrecognized error type": {
+			err: &armadaevents.Error{
+				Reason: &armadaevents.Error_MaxRunsExceeded{
+					MaxRunsExceeded: &armadaevents.MaxRunsExceeded{},
 				},
 			},
 			expected: "",

@@ -40,10 +40,25 @@ type Rule struct {
 	compiledTerminationMessage *regexp.Regexp
 }
 
+// Decision identifies which gate produced an engine verdict. It is used as
+// a prometheus label value, so it must stay low-cardinality.
+type Decision string
+
+const (
+	DecisionRetry           Decision = "retry"
+	DecisionFailRule        Decision = "fail_rule"
+	DecisionFailPolicyLimit Decision = "fail_policy_limit"
+	DecisionFailGlobalLimit Decision = "fail_global_limit"
+	DecisionFailDefault     Decision = "fail_default"
+)
+
 // Result is the output of the retry engine evaluation.
 type Result struct {
 	ShouldRetry bool
 	Reason      string
+	// Decision is the typed counterpart of Reason, suitable for metrics.
+	// Empty only when the engine could not evaluate (nil run error).
+	Decision Decision
 }
 
 // ValidatePolicy checks that a policy has valid fields.

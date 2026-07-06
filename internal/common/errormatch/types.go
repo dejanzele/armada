@@ -36,6 +36,7 @@ const (
 const (
 	ConditionPreempted     = "Preempted"
 	ConditionLeaseReturned = "LeaseReturned"
+	ConditionLeaseExpired  = "LeaseExpired"
 	ConditionAppError      = "AppError"
 )
 

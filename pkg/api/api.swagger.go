@@ -694,7 +694,7 @@ func SwaggerJsonTemplate() string {
 		"    \"/v1/retry-policies\": {\n" +
 		"      \"get\": {\n" +
 		"        \"tags\": [\n" +
-		"          \"Submit\"\n" +
+		"          \"RetryPolicyService\"\n" +
 		"        ],\n" +
 		"        \"operationId\": \"GetRetryPolicies\",\n" +
 		"        \"responses\": {\n" +
@@ -716,7 +716,7 @@ func SwaggerJsonTemplate() string {
 		"    \"/v1/retry-policy\": {\n" +
 		"      \"post\": {\n" +
 		"        \"tags\": [\n" +
-		"          \"Submit\"\n" +
+		"          \"RetryPolicyService\"\n" +
 		"        ],\n" +
 		"        \"operationId\": \"CreateRetryPolicy\",\n" +
 		"        \"parameters\": [\n" +
@@ -746,7 +746,7 @@ func SwaggerJsonTemplate() string {
 		"    \"/v1/retry-policy/{name}\": {\n" +
 		"      \"get\": {\n" +
 		"        \"tags\": [\n" +
-		"          \"Submit\"\n" +
+		"          \"RetryPolicyService\"\n" +
 		"        ],\n" +
 		"        \"operationId\": \"GetRetryPolicy\",\n" +
 		"        \"parameters\": [\n" +
@@ -774,7 +774,7 @@ func SwaggerJsonTemplate() string {
 		"      },\n" +
 		"      \"put\": {\n" +
 		"        \"tags\": [\n" +
-		"          \"Submit\"\n" +
+		"          \"RetryPolicyService\"\n" +
 		"        ],\n" +
 		"        \"operationId\": \"UpdateRetryPolicy\",\n" +
 		"        \"parameters\": [\n" +
@@ -808,7 +808,7 @@ func SwaggerJsonTemplate() string {
 		"      },\n" +
 		"      \"delete\": {\n" +
 		"        \"tags\": [\n" +
-		"          \"Submit\"\n" +
+		"          \"RetryPolicyService\"\n" +
 		"        ],\n" +
 		"        \"operationId\": \"DeleteRetryPolicy\",\n" +
 		"        \"parameters\": [\n" +

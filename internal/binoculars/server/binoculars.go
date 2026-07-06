@@ -2,12 +2,10 @@ package server
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/gogo/protobuf/types"
 
 	"github.com/armadaproject/armada/internal/binoculars/service"
-	"github.com/armadaproject/armada/internal/common"
 	"github.com/armadaproject/armada/internal/common/armadacontext"
 	"github.com/armadaproject/armada/internal/common/auth"
 	"github.com/armadaproject/armada/pkg/api/binoculars"
@@ -31,7 +29,8 @@ func (b *BinocularsServer) Logs(ctx context.Context, request *binoculars.LogRequ
 	logLines, err := b.logService.GetLogs(armadacontext.FromGrpcCtx(ctx), &service.LogParams{
 		Principal:  principal,
 		Namespace:  request.PodNamespace,
-		PodName:    common.PodNamePrefix + request.JobId + "-" + strconv.Itoa(int(request.PodNumber)),
+		JobId:      request.JobId,
+		PodNumber:  request.PodNumber,
 		SinceTime:  request.SinceTime,
 		LogOptions: request.LogOptions,
 	})

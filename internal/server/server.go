@@ -168,11 +168,13 @@ func Serve(ctx *armadacontext.Context, config *configuration.ArmadaConfig, healt
 	queueServer := queue.NewServer(controlPlaneEventsPublisher, queueRepository, authorizer)
 
 	retryPolicyRepo := retrypolicy.NewPostgresRetryPolicyRepository(dbPool)
-	retryPolicyServer := retrypolicy.NewServer(retryPolicyRepo, authorizer)
+	// The delete-time referential check reads queues straight from postgres
+	// rather than the cache, so a queue attached moments earlier still blocks
+	// deletion of its policy.
+	retryPolicyServer := retrypolicy.NewServer(retryPolicyRepo, queueRepository, authorizer)
 
 	submitServer := submit.NewServer(
 		queueServer,
-		retryPolicyServer,
 		jobSetEventsPublisher,
 		queueCache,
 		config.Submission,

@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/viper"
 
-	"github.com/armadaproject/armada/internal/common"
+	"github.com/armadaproject/armada/internal/executor/domain"
 )
 
 func GetKubectlCommand(cluster string, namespace string, jobId string, podNumber int, cmd string) string {
@@ -14,6 +14,9 @@ func GetKubectlCommand(cluster string, namespace string, jobId string, podNumber
 	if t == "" {
 		t = "kubectl --context {{cluster}} -n {{namespace}} {{cmd}} {{pod}}"
 	}
+	// Select the pod by the labels the executor stamps on it rather than
+	// reconstructing its name: retried runs carry a run-index suffix in
+	// their name, so names are no longer derivable from the job id alone.
 	r := strings.NewReplacer(
 		"{{cluster}}",
 		cluster,
@@ -22,7 +25,7 @@ func GetKubectlCommand(cluster string, namespace string, jobId string, podNumber
 		"{{cmd}}",
 		cmd,
 		"{{pod}}",
-		fmt.Sprintf("%s%s-%d", common.PodNamePrefix, jobId, podNumber),
+		fmt.Sprintf("-l %s=%s,%s=%d", domain.JobId, jobId, domain.PodNumber, podNumber),
 	)
 	command := r.Replace(t)
 

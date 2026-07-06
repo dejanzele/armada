@@ -1,6 +1,7 @@
 package retry
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -41,12 +42,11 @@ func compilePolicy(t *testing.T, p *Policy) *Policy {
 
 func TestEngine_Evaluate(t *testing.T) {
 	tests := map[string]struct {
-		globalMax    uint
-		policy       *Policy
-		runError     *armadaevents.Error
-		failureCount uint32
-		totalRuns    uint
-		expected     Result
+		globalMax uint
+		policy    *Policy
+		runError  *armadaevents.Error
+		counts    Counts
+		expected  Result
 	}{
 		"condition match OOMKilled, action Fail": {
 			globalMax: 10,
@@ -57,10 +57,9 @@ func TestEngine_Evaluate(t *testing.T) {
 					{Action: ActionFail, OnConditions: []string{errormatch.ConditionOOMKilled}},
 				},
 			},
-			runError:     makeOOMError(),
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: false, Reason: "matched rule: Fail"},
+			runError: makeOOMError(),
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: false, Reason: "matched rule: Fail"},
 		},
 		"condition match Evicted, action Retry": {
 			globalMax: 10,
@@ -76,9 +75,8 @@ func TestEngine_Evaluate(t *testing.T) {
 					PodError: &armadaevents.PodError{KubernetesReason: armadaevents.KubernetesReason_Evicted},
 				},
 			},
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: true, Reason: "matched rule: Retry"},
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: true, Reason: "matched rule: Retry"},
 		},
 		"condition match DeadlineExceeded": {
 			globalMax: 10,
@@ -94,9 +92,8 @@ func TestEngine_Evaluate(t *testing.T) {
 					PodError: &armadaevents.PodError{KubernetesReason: armadaevents.KubernetesReason_DeadlineExceeded},
 				},
 			},
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: false, Reason: "matched rule: Fail"},
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: false, Reason: "matched rule: Fail"},
 		},
 		"condition match Preempted": {
 			globalMax: 10,
@@ -112,9 +109,8 @@ func TestEngine_Evaluate(t *testing.T) {
 					JobRunPreemptedError: &armadaevents.JobRunPreemptedError{},
 				},
 			},
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: true, Reason: "matched rule: Retry"},
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: true, Reason: "matched rule: Retry"},
 		},
 		"condition match LeaseReturned": {
 			globalMax: 10,
@@ -130,9 +126,25 @@ func TestEngine_Evaluate(t *testing.T) {
 					PodLeaseReturned: &armadaevents.PodLeaseReturned{},
 				},
 			},
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: true, Reason: "matched rule: Retry"},
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: true, Reason: "matched rule: Retry"},
+		},
+		"condition match LeaseExpired": {
+			globalMax: 10,
+			policy: &Policy{
+				Name:          "test",
+				DefaultAction: ActionFail,
+				Rules: []Rule{
+					{Action: ActionRetry, OnConditions: []string{errormatch.ConditionLeaseExpired}},
+				},
+			},
+			runError: &armadaevents.Error{
+				Reason: &armadaevents.Error_LeaseExpired{
+					LeaseExpired: &armadaevents.LeaseExpired{},
+				},
+			},
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: true, Reason: "matched rule: Retry"},
 		},
 		"condition match AppError": {
 			globalMax: 10,
@@ -143,10 +155,9 @@ func TestEngine_Evaluate(t *testing.T) {
 					{Action: ActionFail, OnConditions: []string{errormatch.ConditionAppError}},
 				},
 			},
-			runError:     makeAppError(1, "crash"),
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: false, Reason: "matched rule: Fail"},
+			runError: makeAppError(1, "crash"),
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: false, Reason: "matched rule: Fail"},
 		},
 		"exit code In match": {
 			globalMax: 10,
@@ -160,10 +171,9 @@ func TestEngine_Evaluate(t *testing.T) {
 					},
 				},
 			},
-			runError:     makeAppError(42, ""),
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: false, Reason: "matched rule: Fail"},
+			runError: makeAppError(42, ""),
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: false, Reason: "matched rule: Fail"},
 		},
 		"exit code NotIn match": {
 			globalMax: 10,
@@ -177,10 +187,9 @@ func TestEngine_Evaluate(t *testing.T) {
 					},
 				},
 			},
-			runError:     makeAppError(1, ""),
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: true, Reason: "matched rule: Retry"},
+			runError: makeAppError(1, ""),
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: true, Reason: "matched rule: Retry"},
 		},
 		"termination message regex match": {
 			globalMax: 10,
@@ -194,10 +203,9 @@ func TestEngine_Evaluate(t *testing.T) {
 					},
 				},
 			},
-			runError:     makeAppError(1, "CUDA memory error on device 0"),
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: false, Reason: "matched rule: Fail"},
+			runError: makeAppError(1, "CUDA memory error on device 0"),
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: false, Reason: "matched rule: Fail"},
 		},
 		"termination message regex no match": {
 			globalMax: 10,
@@ -211,10 +219,9 @@ func TestEngine_Evaluate(t *testing.T) {
 					},
 				},
 			},
-			runError:     makeAppError(1, "segfault"),
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: true, Reason: "no rule matched, using default action"},
+			runError: makeAppError(1, "segfault"),
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: true, Reason: "no rule matched, using default action"},
 		},
 		"category match (any subcategory)": {
 			globalMax: 10,
@@ -232,9 +239,8 @@ func TestEngine_Evaluate(t *testing.T) {
 				FailureCategory:    "gpu",
 				FailureSubcategory: "transient",
 			},
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: false, Reason: "matched rule: Fail"},
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: false, Reason: "matched rule: Fail"},
 		},
 		"category match with subcategory match": {
 			globalMax: 10,
@@ -252,9 +258,8 @@ func TestEngine_Evaluate(t *testing.T) {
 				FailureCategory:    "gpu",
 				FailureSubcategory: "transient",
 			},
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: false, Reason: "matched rule: Fail"},
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: false, Reason: "matched rule: Fail"},
 		},
 		"category match but subcategory mismatch": {
 			globalMax: 10,
@@ -272,9 +277,8 @@ func TestEngine_Evaluate(t *testing.T) {
 				FailureCategory:    "gpu",
 				FailureSubcategory: "transient",
 			},
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: true, Reason: "no rule matched, using default action"},
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: true, Reason: "no rule matched, using default action"},
 		},
 		"category mismatch": {
 			globalMax: 10,
@@ -292,9 +296,8 @@ func TestEngine_Evaluate(t *testing.T) {
 				FailureCategory:    "gpu",
 				FailureSubcategory: "transient",
 			},
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: true, Reason: "no rule matched, using default action"},
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: true, Reason: "no rule matched, using default action"},
 		},
 		"first match wins": {
 			globalMax: 10,
@@ -306,10 +309,9 @@ func TestEngine_Evaluate(t *testing.T) {
 					{Action: ActionFail, OnConditions: []string{errormatch.ConditionAppError}},
 				},
 			},
-			runError:     makeAppError(1, "crash"),
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: true, Reason: "matched rule: Retry"},
+			runError: makeAppError(1, "crash"),
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: true, Reason: "matched rule: Retry"},
 		},
 		"no match returns DefaultAction Fail": {
 			globalMax: 10,
@@ -320,10 +322,9 @@ func TestEngine_Evaluate(t *testing.T) {
 					{Action: ActionRetry, OnConditions: []string{errormatch.ConditionOOMKilled}},
 				},
 			},
-			runError:     makeAppError(1, ""),
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: false, Reason: "no rule matched, using default action"},
+			runError: makeAppError(1, ""),
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: false, Reason: "no rule matched, using default action"},
 		},
 		"no match returns DefaultAction Retry": {
 			globalMax: 10,
@@ -334,10 +335,9 @@ func TestEngine_Evaluate(t *testing.T) {
 					{Action: ActionFail, OnConditions: []string{errormatch.ConditionOOMKilled}},
 				},
 			},
-			runError:     makeAppError(1, ""),
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: true, Reason: "no rule matched, using default action"},
+			runError: makeAppError(1, ""),
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: true, Reason: "no rule matched, using default action"},
 		},
 		"global cap exceeded": {
 			globalMax: 5,
@@ -345,12 +345,11 @@ func TestEngine_Evaluate(t *testing.T) {
 				Name:          "test",
 				DefaultAction: ActionRetry,
 			},
-			runError:     makeAppError(1, "crash"),
-			failureCount: 0,
-			// totalRuns=6 means 5 retries have already happened (initial run
+			runError: makeAppError(1, "crash"),
+			// TotalRuns=6 means 5 retries have already happened (initial run
 			// plus 5 re-leases). At globalMax=5 the cap is now reached.
-			totalRuns: 6,
-			expected:  Result{ShouldRetry: false, Reason: "global max retries exceeded (5/5)"},
+			counts:   Counts{TotalRuns: 6},
+			expected: Result{ShouldRetry: false, Reason: "global max retries exceeded (5/5)"},
 		},
 		"retry limit exceeded": {
 			globalMax: 100,
@@ -360,12 +359,11 @@ func TestEngine_Evaluate(t *testing.T) {
 				DefaultAction: ActionRetry,
 			},
 			runError: makeAppError(1, "crash"),
-			// failureCount=4 means 3 retries have already happened (initial
+			// Failures=4 means 3 retries have already happened (initial
 			// failure plus 3 retry failures). At retryLimit=3 the cap is now
 			// reached.
-			failureCount: 4,
-			totalRuns:    4,
-			expected:     Result{ShouldRetry: false, Reason: "policy retry limit exceeded (3/3)"},
+			counts:   Counts{Failures: 4, TotalRuns: 4},
+			expected: Result{ShouldRetry: false, Reason: "policy retry limit exceeded (3/3)"},
 		},
 		"retry limit 0 means unlimited within global cap": {
 			globalMax: 100,
@@ -374,10 +372,9 @@ func TestEngine_Evaluate(t *testing.T) {
 				RetryLimit:    0,
 				DefaultAction: ActionRetry,
 			},
-			runError:     makeAppError(1, "crash"),
-			failureCount: 50,
-			totalRuns:    50,
-			expected:     Result{ShouldRetry: true, Reason: "no rule matched, using default action"},
+			runError: makeAppError(1, "crash"),
+			counts:   Counts{Failures: 50, TotalRuns: 50},
+			expected: Result{ShouldRetry: true, Reason: "no rule matched, using default action"},
 		},
 		"nil error returns fail": {
 			globalMax: 10,
@@ -385,10 +382,9 @@ func TestEngine_Evaluate(t *testing.T) {
 				Name:          "test",
 				DefaultAction: ActionRetry,
 			},
-			runError:     nil,
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: false, Reason: "no error information available"},
+			runError: nil,
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: false, Reason: "no error information available"},
 		},
 		"exit code match reads from ContainerError": {
 			globalMax: 10,
@@ -410,9 +406,8 @@ func TestEngine_Evaluate(t *testing.T) {
 					},
 				},
 			},
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: false, Reason: "matched rule: Fail"},
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: false, Reason: "matched rule: Fail"},
 		},
 		"AND logic, all fields must match": {
 			globalMax: 10,
@@ -428,10 +423,9 @@ func TestEngine_Evaluate(t *testing.T) {
 				},
 			},
 			// Condition matches but exit code does not
-			runError:     makeAppError(1, ""),
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: true, Reason: "no rule matched, using default action"},
+			runError: makeAppError(1, ""),
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: true, Reason: "no rule matched, using default action"},
 		},
 		"AND logic, both fields match": {
 			globalMax: 10,
@@ -446,10 +440,9 @@ func TestEngine_Evaluate(t *testing.T) {
 					},
 				},
 			},
-			runError:     makeAppError(42, ""),
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: false, Reason: "matched rule: Fail"},
+			runError: makeAppError(42, ""),
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: false, Reason: "matched rule: Fail"},
 		},
 		"empty rules returns DefaultAction": {
 			globalMax: 10,
@@ -458,21 +451,101 @@ func TestEngine_Evaluate(t *testing.T) {
 				DefaultAction: ActionFail,
 				Rules:         []Rule{},
 			},
-			runError:     makeAppError(1, "crash"),
-			failureCount: 0,
-			totalRuns:    1,
-			expected:     Result{ShouldRetry: false, Reason: "no rule matched, using default action"},
+			runError: makeAppError(1, "crash"),
+			counts:   Counts{TotalRuns: 1},
+			expected: Result{ShouldRetry: false, Reason: "no rule matched, using default action"},
 		},
-		"globalMaxRetries 0 means unlimited": {
+		"globalMaxRetries 0 disables retries": {
 			globalMax: 0,
 			policy: &Policy{
 				Name:          "test",
 				DefaultAction: ActionRetry,
 			},
-			runError:     makeAppError(1, "crash"),
-			failureCount: 100,
-			totalRuns:    100,
-			expected:     Result{ShouldRetry: true, Reason: "no rule matched, using default action"},
+			runError: makeAppError(1, "crash"),
+			counts:   Counts{Failures: 1, TotalRuns: 1},
+			expected: Result{ShouldRetry: false, Reason: "global max retries is 0, retries disabled"},
+		},
+		"globalMaxRetries 0 disables retries even with matching Retry rule": {
+			globalMax: 0,
+			policy: &Policy{
+				Name:          "test",
+				DefaultAction: ActionFail,
+				Rules: []Rule{
+					{Action: ActionRetry, OnConditions: []string{errormatch.ConditionAppError}},
+				},
+			},
+			runError: makeAppError(1, "crash"),
+			counts:   Counts{Failures: 1, TotalRuns: 1},
+			expected: Result{ShouldRetry: false, Reason: "global max retries is 0, retries disabled"},
+		},
+		"preemption error consumes Preemptions tally, not Failures": {
+			globalMax: 100,
+			policy: &Policy{
+				Name:          "test",
+				RetryLimit:    2,
+				DefaultAction: ActionRetry,
+			},
+			runError: &armadaevents.Error{
+				Reason: &armadaevents.Error_JobRunPreemptedError{
+					JobRunPreemptedError: &armadaevents.JobRunPreemptedError{},
+				},
+			},
+			// Failures=3 is over the limit, but a preemption error is charged
+			// against Preemptions=1 (0 preemption retries used), so it retries.
+			counts:   Counts{Failures: 3, Preemptions: 1, TotalRuns: 4},
+			expected: Result{ShouldRetry: true, Reason: "no rule matched, using default action"},
+		},
+		"preemption error over Preemptions limit does not retry": {
+			globalMax: 100,
+			policy: &Policy{
+				Name:          "test",
+				RetryLimit:    2,
+				DefaultAction: ActionRetry,
+			},
+			runError: &armadaevents.Error{
+				Reason: &armadaevents.Error_JobRunPreemptedError{
+					JobRunPreemptedError: &armadaevents.JobRunPreemptedError{},
+				},
+			},
+			counts:   Counts{Failures: 1, Preemptions: 3, TotalRuns: 4},
+			expected: Result{ShouldRetry: false, Reason: "policy retry limit exceeded (2/2)"},
+		},
+		"failure error consumes Failures tally, not Preemptions": {
+			globalMax: 100,
+			policy: &Policy{
+				Name:          "test",
+				RetryLimit:    2,
+				DefaultAction: ActionRetry,
+			},
+			runError: makeAppError(1, "crash"),
+			// Preemptions=3 is over the limit, but a genuine failure is
+			// charged against Failures=1 (0 failure retries used).
+			counts:   Counts{Failures: 1, Preemptions: 3, TotalRuns: 4},
+			expected: Result{ShouldRetry: true, Reason: "no rule matched, using default action"},
+		},
+		"failure error over Failures limit does not retry": {
+			globalMax: 100,
+			policy: &Policy{
+				Name:          "test",
+				RetryLimit:    2,
+				DefaultAction: ActionRetry,
+			},
+			runError: makeAppError(1, "crash"),
+			counts:   Counts{Failures: 3, Preemptions: 1, TotalRuns: 4},
+			expected: Result{ShouldRetry: false, Reason: "policy retry limit exceeded (2/2)"},
+		},
+		"global cap counts every run regardless of tally": {
+			globalMax: 3,
+			policy: &Policy{
+				Name:          "test",
+				RetryLimit:    0,
+				DefaultAction: ActionRetry,
+			},
+			runError: makeAppError(1, "crash"),
+			// Failures and Preemptions are individually low, but TotalRuns
+			// includes legacy lease returns and trips the global cap.
+			counts:   Counts{Failures: 1, Preemptions: 1, TotalRuns: 4},
+			expected: Result{ShouldRetry: false, Reason: "global max retries exceeded (3/3)"},
 		},
 	}
 
@@ -480,9 +553,34 @@ func TestEngine_Evaluate(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			tc.policy = compilePolicy(t, tc.policy)
 			engine := NewEngine(tc.globalMax)
-			result := engine.Evaluate(tc.policy, tc.runError, tc.failureCount, tc.totalRuns)
+			result := engine.Evaluate(tc.policy, tc.runError, tc.counts)
+			if tc.expected.Decision == "" {
+				tc.expected.Decision = expectedDecision(tc.expected)
+			}
 			assert.Equal(t, tc.expected, result)
 		})
+	}
+}
+
+// expectedDecision maps a Reason to the Decision that must accompany it, so
+// every table case pins the typed decision without repeating it. A case can
+// still set Decision explicitly to override the mapping.
+func expectedDecision(r Result) Decision {
+	switch {
+	case r.Reason == reasonNoErrorAvailable:
+		return ""
+	case r.Reason == reasonRetriesDisabled:
+		return DecisionFailGlobalLimit
+	case strings.HasPrefix(r.Reason, "global max retries exceeded"):
+		return DecisionFailGlobalLimit
+	case strings.HasPrefix(r.Reason, "policy retry limit exceeded"):
+		return DecisionFailPolicyLimit
+	case r.Reason == reasonMatchFail:
+		return DecisionFailRule
+	case r.ShouldRetry:
+		return DecisionRetry
+	default:
+		return DecisionFailDefault
 	}
 }
 
@@ -626,7 +724,7 @@ func TestEvaluate_OnTerminationMessageIgnoredForNonContainerFailures(t *testing.
 
 	for name, runErr := range tests {
 		t.Run(name, func(t *testing.T) {
-			engine := NewEngine(0)
+			engine := NewEngine(10)
 			policy := &Policy{
 				Name:          "p",
 				DefaultAction: ActionFail,
@@ -636,7 +734,7 @@ func TestEvaluate_OnTerminationMessageIgnoredForNonContainerFailures(t *testing.
 			}
 			require.NoError(t, CompileRules(policy.Rules))
 
-			result := engine.Evaluate(policy, runErr, 0, 1)
+			result := engine.Evaluate(policy, runErr, Counts{TotalRuns: 1})
 			assert.False(t, result.ShouldRetry,
 				"wildcard OnTerminationMessage must not match non-container failures; otherwise lease-return/preemption silently triggers retries")
 			assert.Equal(t, "no rule matched, using default action", result.Reason)

@@ -2,6 +2,8 @@ package retrypolicy
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/gogo/protobuf/types"
 	"github.com/pkg/errors"
@@ -11,20 +13,28 @@ import (
 	"github.com/armadaproject/armada/internal/common/armadacontext"
 	"github.com/armadaproject/armada/internal/common/armadaerrors"
 	"github.com/armadaproject/armada/internal/common/auth"
-	"github.com/armadaproject/armada/internal/scheduler/retry"
 	"github.com/armadaproject/armada/internal/server/permissions"
 	"github.com/armadaproject/armada/pkg/api"
+	"github.com/armadaproject/armada/pkg/client/queue"
 )
 
-type Server struct {
-	repository RetryPolicyRepository
-	authorizer auth.ActionAuthorizer
+// QueueLister supplies the queues checked before a retry policy is deleted.
+// Satisfied by both queue.PostgresQueueRepository and queue.CachedQueueRepository.
+type QueueLister interface {
+	GetAllQueues(ctx *armadacontext.Context) ([]queue.Queue, error)
 }
 
-func NewServer(repository RetryPolicyRepository, authorizer auth.ActionAuthorizer) *Server {
+type Server struct {
+	repository  RetryPolicyRepository
+	queueLister QueueLister
+	authorizer  auth.ActionAuthorizer
+}
+
+func NewServer(repository RetryPolicyRepository, queueLister QueueLister, authorizer auth.ActionAuthorizer) *Server {
 	return &Server{
-		repository: repository,
-		authorizer: authorizer,
+		repository:  repository,
+		queueLister: queueLister,
+		authorizer:  authorizer,
 	}
 }
 
@@ -38,14 +48,10 @@ func (s *Server) CreateRetryPolicy(grpcCtx context.Context, req *api.RetryPolicy
 		return nil, status.Errorf(codes.Unavailable, "error checking permissions: %s", err)
 	}
 
-	if req.Name == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "retry policy name must not be empty")
-	}
-
-	// Reject invalid policies up front. The cache loader runs the same
-	// validation and silently drops bad policies, so without this check the
+	// Reject invalid policies up front. The scheduler validates policies when
+	// loading them and silently drops bad ones, so without this check the
 	// operator gets a 200 OK and only sees the policy fail to install later.
-	if _, err := retry.ConvertPolicy(req); err != nil {
+	if err := ValidatePolicy(req); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid retry policy: %s", err)
 	}
 
@@ -70,11 +76,7 @@ func (s *Server) UpdateRetryPolicy(grpcCtx context.Context, req *api.RetryPolicy
 		return nil, status.Errorf(codes.Unavailable, "error checking permissions: %s", err)
 	}
 
-	if req.Name == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "retry policy name must not be empty")
-	}
-
-	if _, err := retry.ConvertPolicy(req); err != nil {
+	if err := ValidatePolicy(req); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid retry policy: %s", err)
 	}
 
@@ -103,11 +105,50 @@ func (s *Server) DeleteRetryPolicy(grpcCtx context.Context, req *api.RetryPolicy
 		return nil, status.Errorf(codes.InvalidArgument, "retry policy name must not be empty")
 	}
 
+	// Deleting a policy that queues still reference would leave those queues
+	// pointing at nothing, silently disabling their retries. Force the
+	// operator to detach the policy from all queues first.
+	referencing, err := s.queuesReferencingPolicy(ctx, req.Name)
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "error checking queues referencing retry policy %s: %s", req.Name, err)
+	}
+	if len(referencing) > 0 {
+		shown := referencing
+		if len(shown) > maxReportedReferencingQueues {
+			shown = shown[:maxReportedReferencingQueues]
+		}
+		return nil, status.Errorf(
+			codes.FailedPrecondition,
+			"retry policy %s is still referenced by %d queue(s), including: %s",
+			req.Name, len(referencing), strings.Join(shown, ", "),
+		)
+	}
+
 	err = s.repository.DeleteRetryPolicy(ctx, req.Name)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "error deleting retry policy %s: %s", req.Name, err)
 	}
 	return &types.Empty{}, nil
+}
+
+// Cap on queue names included in the FailedPrecondition message so a policy
+// referenced by hundreds of queues does not produce an unreadable error.
+const maxReportedReferencingQueues = 5
+
+// queuesReferencingPolicy returns the names of all queues whose retry policy
+// field matches the given policy name.
+func (s *Server) queuesReferencingPolicy(ctx *armadacontext.Context, policyName string) ([]string, error) {
+	queues, err := s.queueLister.GetAllQueues(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list queues: %w", err)
+	}
+	var names []string
+	for _, q := range queues {
+		if q.RetryPolicy == policyName {
+			names = append(names, q.Name)
+		}
+	}
+	return names, nil
 }
 
 // GetRetryPolicy returns a single retry policy by name.
