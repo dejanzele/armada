@@ -24,6 +24,7 @@ import (
 	"github.com/armadaproject/armada/internal/common/util"
 	"github.com/armadaproject/armada/internal/executor/categorizer"
 	"github.com/armadaproject/armada/internal/executor/configuration"
+	podchecks_config "github.com/armadaproject/armada/internal/executor/configuration/podchecks"
 	executor_context "github.com/armadaproject/armada/internal/executor/context"
 	"github.com/armadaproject/armada/internal/executor/job"
 	"github.com/armadaproject/armada/internal/executor/job/processors"
@@ -201,6 +202,10 @@ func setupExecutorApiComponents(
 	if err != nil {
 		ctx.Fatalf("Config error in failed pod checks: %s", err)
 	}
+	if failedPodChecksConfigured(config.Kubernetes.FailedPodChecks) {
+		ctx.Warn("kubernetes.failedPodChecks is deprecated and will be removed in a future release. " +
+			"It will be superseded by retry policies. Matching rules can move to application.errorCategories for failure attribution now.")
+	}
 
 	var classifier *categorizer.Classifier
 	if config.Application.ErrorCategories.Enabled {
@@ -258,7 +263,6 @@ func setupExecutorApiComponents(
 		clusterContext,
 		eventReporter,
 		podIssueService,
-		classifier,
 	)
 	if err != nil {
 		ctx.Fatalf("Failed to create job state reporter: %s", err)
@@ -311,6 +315,13 @@ func createConnectionToApi(connectionDetails client.ApiConnectionDetails, maxMes
 		grpc.WithChainStreamInterceptor(clientMetrics.StreamClientInterceptor()),
 		grpc.WithKeepaliveParams(grpcConfig),
 	)
+}
+
+// failedPodChecksConfigured reports whether any deprecated failedPodChecks
+// rules are set, so startup can warn operators to migrate to
+// application.errorCategories.
+func failedPodChecksConfigured(checks podchecks_config.FailedChecks) bool {
+	return len(checks.Events) > 0 || len(checks.PodStatuses) > 0 || len(checks.ContainerStatuses) > 0
 }
 
 func validateConfig(config configuration.ExecutorConfiguration) error {

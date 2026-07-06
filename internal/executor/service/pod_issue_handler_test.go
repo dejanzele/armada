@@ -254,40 +254,45 @@ func TestPodIssueService_DetectAndRegisterFailedPodIssue(t *testing.T) {
 		pod                      *v1.Pod
 		issueAlreadyExists       bool
 		shouldErrorGettingEvents bool
-		expectIssueAdded         bool
+		expectHandled            bool
 		expectError              bool
 	}{
 		"FailedPodWithIssue": {
-			pod:              failedPodWithRetryableIssue,
-			expectIssueAdded: true,
-			expectError:      false,
+			pod:           failedPodWithRetryableIssue,
+			expectHandled: true,
+			expectError:   false,
 		},
 		"FailedPodWithoutIssue": {
-			pod:              failedPodWithNonRetryableIssue,
-			expectIssueAdded: false,
-			expectError:      false,
+			pod:           failedPodWithNonRetryableIssue,
+			expectHandled: false,
+			expectError:   false,
 		},
+		// When another goroutine already registered an issue for the run, the
+		// pod must still be reported as handled: the loser of the race must not
+		// emit a terminal Failed event alongside the winner's lease return.
 		"FailedPodWithIssue_IssueAlreadyRegistered": {
 			pod:                failedPodWithRetryableIssue,
 			issueAlreadyExists: true,
-			expectIssueAdded:   false,
+			expectHandled:      true,
 			expectError:        false,
 		},
+		// An events error only degrades the deprecated event-based checks and
+		// the debug message. The pod-status match still drives a retry.
 		"FailedPodWithIssue_EventErrors": {
 			pod:                      failedPodWithRetryableIssue,
 			shouldErrorGettingEvents: true,
-			expectIssueAdded:         false,
-			expectError:              true,
+			expectHandled:            true,
+			expectError:              false,
 		},
 		"UnmanagedPod": {
-			pod:              &v1.Pod{},
-			expectIssueAdded: false,
-			expectError:      false,
+			pod:           &v1.Pod{},
+			expectHandled: false,
+			expectError:   false,
 		},
 		"RunningPod": {
-			pod:              makeRunningPod(),
-			expectIssueAdded: false,
-			expectError:      false,
+			pod:           makeRunningPod(),
+			expectHandled: false,
+			expectError:   false,
 		},
 	}
 
@@ -307,9 +312,9 @@ func TestPodIssueService_DetectAndRegisterFailedPodIssue(t *testing.T) {
 				fakeClusterContext.GetPodEventsErr = fmt.Errorf("failed getting events")
 			}
 
-			issueAdded, err := podIssueService.DetectAndRegisterFailedPodIssue(tc.pod)
+			handled, _, err := podIssueService.DetectAndRegisterFailedPodIssue(tc.pod)
 
-			assert.Equal(t, tc.expectIssueAdded, issueAdded)
+			assert.Equal(t, tc.expectHandled, handled)
 			if tc.expectError {
 				assert.Error(t, err)
 			} else {
@@ -317,6 +322,181 @@ func TestPodIssueService_DetectAndRegisterFailedPodIssue(t *testing.T) {
 			}
 		})
 	}
+}
+
+func testClassifier(t *testing.T, category, subcategory, hint string, exitCode int32) *categorizer.Classifier {
+	t.Helper()
+	c, err := categorizer.NewClassifier(categorizer.ErrorCategoriesConfig{
+		DefaultCategory: "uncategorized",
+		Categories: []categorizer.CategoryConfig{
+			{
+				Name: category,
+				Rules: []categorizer.CategoryRule{
+					{
+						OnExitCodes: &errormatch.ExitCodeMatcher{
+							Operator: errormatch.ExitCodeOperatorIn,
+							Values:   []int32{exitCode},
+						},
+						Subcategory: subcategory,
+						Hint:        hint,
+					},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	return c
+}
+
+func makeFailedPodWithTerminatedContainer(exitCode int32, reason, message string) *v1.Pod {
+	pod := makeTestPod(v1.PodStatus{
+		Phase: v1.PodFailed,
+		ContainerStatuses: []v1.ContainerStatus{
+			{
+				Name: "main",
+				State: v1.ContainerState{
+					Terminated: &v1.ContainerStateTerminated{ExitCode: exitCode, Reason: reason, Message: message},
+				},
+			},
+		},
+	})
+	return pod
+}
+
+func TestPodIssueService_DetectAndRegisterFailedPodIssue_LegacyRetryableIsClassified(t *testing.T) {
+	// The retry decision comes from failedPodChecks. The classifier labels the
+	// failure so the lease return is attributable by category.
+	classifier := testClassifier(t, "infra-flake", "simulated", "", 17)
+	podIssueService, _, _, _, err := setupTestComponentsWithClassifier([]*job.RunState{}, classifier)
+	require.NoError(t, err)
+
+	pod := makeFailedPodWithTerminatedContainer(17, "Error", "network blip")
+	pod.Status.Message = retryableFailedPodStatusMessage
+
+	handled, result, err := podIssueService.DetectAndRegisterFailedPodIssue(pod)
+
+	require.NoError(t, err)
+	assert.True(t, handled)
+	assert.Equal(t, "infra-flake", result.Category)
+	assert.Equal(t, "simulated", result.Subcategory)
+	assert.True(t, podIssueService.HasIssue(util.ExtractJobRunId(pod)))
+
+	registeredIssue := podIssueService.knownPodIssues[util.ExtractJobRunId(pod)]
+	require.NotNil(t, registeredIssue)
+	require.NotNil(t, registeredIssue.PodIssue)
+	assert.True(t, registeredIssue.PodIssue.Retryable)
+	assert.Equal(t, FailedStartingUp, registeredIssue.PodIssue.Type)
+	assert.Equal(t, "infra-flake", registeredIssue.PodIssue.Category)
+	assert.Equal(t, "simulated", registeredIssue.PodIssue.Subcategory)
+	// The issue message carries the legacy checker's matched container text.
+	assert.Contains(t, registeredIssue.PodIssue.Message, "network blip")
+}
+
+func TestPodIssueService_DetectAndRegisterFailedPodIssue_NonRetryableClassificationReturnsResult(t *testing.T) {
+	// Classification labels the failure but the legacy checker does not match,
+	// so the pod is not handled. The caller still gets the classification for
+	// the terminal Failed event.
+	classifier, err := categorizer.NewClassifier(categorizer.ErrorCategoriesConfig{
+		DefaultCategory: "uncategorized",
+		Categories: []categorizer.CategoryConfig{
+			{
+				Name: "user-error",
+				Rules: []categorizer.CategoryRule{
+					{
+						OnExitCodes: &errormatch.ExitCodeMatcher{
+							Operator: errormatch.ExitCodeOperatorIn,
+							Values:   []int32{3},
+						},
+						Subcategory: "bad-exit",
+					},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	podIssueService, _, _, _, err := setupTestComponentsWithClassifier([]*job.RunState{}, classifier)
+	require.NoError(t, err)
+
+	pod := makeFailedPodWithTerminatedContainer(3, "Error", "user bug")
+
+	handled, result, err := podIssueService.DetectAndRegisterFailedPodIssue(pod)
+
+	require.NoError(t, err)
+	assert.False(t, handled)
+	assert.Equal(t, "user-error", result.Category)
+	assert.Equal(t, "bad-exit", result.Subcategory)
+	assert.False(t, podIssueService.HasIssue(util.ExtractJobRunId(pod)))
+}
+
+func TestPodIssueService_DetectAndRegisterFailedPodIssue_HandledWhenIssueAlreadyRegistered(t *testing.T) {
+	classifier := testClassifier(t, "infra-flake", "simulated", "", 17)
+	podIssueService, _, _, _, err := setupTestComponentsWithClassifier([]*job.RunState{}, classifier)
+	require.NoError(t, err)
+
+	pod := makeFailedPodWithTerminatedContainer(17, "Error", "network blip")
+	pod.Status.Message = retryableFailedPodStatusMessage
+
+	handled, _, err := podIssueService.DetectAndRegisterFailedPodIssue(pod)
+	require.NoError(t, err)
+	require.True(t, handled)
+
+	// A concurrent reporter goroutine losing the registration race must still
+	// see handled=true or it would emit a terminal Failed event for a run whose
+	// lease is about to be returned.
+	handled, result, err := podIssueService.DetectAndRegisterFailedPodIssue(pod)
+	require.NoError(t, err)
+	assert.True(t, handled)
+	assert.Equal(t, "infra-flake", result.Category)
+}
+
+func TestPodIssueService_LegacyRetryableIssue_LeaseReturnCarriesCategory(t *testing.T) {
+	classifier := testClassifier(t, "infra-flake", "simulated", "", 17)
+	podIssueService, _, fakeClusterContext, eventsReporter, err := setupTestComponentsWithClassifier([]*job.RunState{}, classifier)
+	require.NoError(t, err)
+
+	pod := makeFailedPodWithTerminatedContainer(17, "Error", "network blip")
+	pod.Status.Message = retryableFailedPodStatusMessage
+	addPod(t, fakeClusterContext, pod)
+
+	handled, _, err := podIssueService.DetectAndRegisterFailedPodIssue(pod)
+	require.NoError(t, err)
+	require.True(t, handled)
+
+	// First cycle deletes the failed pod, second cycle returns the lease.
+	podIssueService.HandlePodIssues()
+	assert.Equal(t, []*v1.Pod{}, getActivePods(t, fakeClusterContext))
+	eventsReporter.ReceivedEvents = []reporter.EventMessage{}
+	podIssueService.HandlePodIssues()
+
+	require.Len(t, eventsReporter.ReceivedEvents, 1)
+	returnedEvent, ok := eventsReporter.ReceivedEvents[0].Event.Events[0].Event.(*armadaevents.EventSequence_Event_JobRunErrors)
+	require.True(t, ok)
+	require.Len(t, returnedEvent.JobRunErrors.Errors, 1)
+	leaseReturnError := returnedEvent.JobRunErrors.Errors[0]
+	require.NotNil(t, leaseReturnError.GetPodLeaseReturned())
+	assert.True(t, leaseReturnError.GetPodLeaseReturned().RunAttempted)
+	assert.Contains(t, leaseReturnError.GetPodLeaseReturned().Message, "network blip")
+	assert.Equal(t, "infra-flake", leaseReturnError.GetFailureCategory())
+	assert.Equal(t, "simulated", leaseReturnError.GetFailureSubcategory())
+}
+
+func TestPodIssueService_LegacyFailedPodChecksStillRegistersIssue(t *testing.T) {
+	// failedPodChecks keeps deciding retryability until retry policies replace
+	// it. A pod matching no category rule gets the default-category attribution
+	// on its lease return.
+	classifier := testClassifier(t, "infra-flake", "simulated", "", 17)
+	podIssueService, _, _, _, err := setupTestComponentsWithClassifier([]*job.RunState{}, classifier)
+	require.NoError(t, err)
+
+	pod := makeTestPod(v1.PodStatus{Phase: v1.PodFailed})
+	pod.Status.Message = retryableFailedPodStatusMessage
+
+	handled, result, err := podIssueService.DetectAndRegisterFailedPodIssue(pod)
+
+	require.NoError(t, err)
+	assert.True(t, handled)
+	assert.Equal(t, "uncategorized", result.Category)
+	assert.True(t, podIssueService.HasIssue(util.ExtractJobRunId(pod)))
 }
 
 func TestPodIssueService_DeletesPodAndReportsFailed_IfExceedsActiveDeadline(t *testing.T) {
@@ -772,6 +952,15 @@ func makeFailedPodChecker() failedpodchecks.RetryChecker {
 		PodStatuses: []podchecksConfig.PodStatusCheck{
 			{
 				Regexp: fmt.Sprintf("^%s$", retryableFailedPodStatusMessage),
+			},
+		},
+		// Pods with started containers are dispatched to container-status
+		// checks only, so legacy-driven tests using terminated containers need
+		// a container check to match on.
+		ContainerStatuses: []podchecksConfig.FailedContainerStatusCheck{
+			{
+				ContainerNameRegexp: "^main$",
+				MessageRegexp:       "network blip",
 			},
 		},
 	})

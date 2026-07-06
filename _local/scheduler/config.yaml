@@ -11,7 +11,7 @@ observability:
     sampler: "parent_based_trace_id_ratio"
     samplerArg: 1.0
 http:
-  port: 8080
+  port: 8085
 auth:
   anonymousAuth: true
   permissionGroupMapping:
@@ -24,7 +24,7 @@ armadaApi:
 postgres:
   connection:
     host: localhost
-    port: 5432
+    port: 5433
     user: postgres
     password: psw
     dbname: scheduler

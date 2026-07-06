@@ -47,6 +47,11 @@ type podIssue struct {
 	DeletionRequested bool
 	Type              podIssueType
 	Cause             armadaevents.KubernetesReason
+	// Category and Subcategory carry the categorizer classification of the
+	// failure that raised this issue, so lease returns stay attributable by
+	// category in Lookout. Empty when classification is off or nothing matched.
+	Category    string
+	Subcategory string
 }
 
 type reconciliationIssue struct {
@@ -69,7 +74,11 @@ type runIssue struct {
 
 type IssueHandler interface {
 	HasIssue(runId string) bool
-	DetectAndRegisterFailedPodIssue(pod *v1.Pod) (bool, error)
+	// DetectAndRegisterFailedPodIssue reports whether the issue handler has
+	// taken ownership of a failed pod (handled=true means the caller must not
+	// emit a terminal event) and returns the failure classification so callers
+	// can build the Failed event without classifying again.
+	DetectAndRegisterFailedPodIssue(pod *v1.Pod) (bool, categorizer.ClassifyResult, error)
 }
 
 type PodIssueHandler struct {
@@ -142,36 +151,54 @@ func (p *PodIssueHandler) HasIssue(runId string) bool {
 	return exists
 }
 
-func (p *PodIssueHandler) DetectAndRegisterFailedPodIssue(pod *v1.Pod) (bool, error) {
+func (p *PodIssueHandler) DetectAndRegisterFailedPodIssue(pod *v1.Pod) (bool, categorizer.ClassifyResult, error) {
 	if !util.IsManagedPod(pod) || pod.Status.Phase != v1.PodFailed {
-		return false, nil
+		return false, categorizer.ClassifyResult{}, nil
 	}
 	jobId := util.ExtractJobId(pod)
 	runId := util.ExtractJobRunId(pod)
 
+	// Pod events feed only the deprecated failedPodChecks matcher and the debug
+	// message, so an events error must not suppress classification.
 	podEvents, err := p.clusterContext.GetPodEvents(pod)
 	if err != nil {
-		return false, fmt.Errorf("Failed retrieving pod events for pod %s: %v", pod.Name, err)
+		log.Errorf("Failed retrieving pod events for pod %s: %v", pod.Name, err)
+		podEvents = nil
 	}
 
-	isRetryable, message := p.failedPodChecker.IsRetryable(pod, podEvents)
-	if isRetryable {
-		return p.registerIssue(&runIssue{
-			JobId: jobId,
-			RunId: runId,
-			PodIssue: &podIssue{
-				OriginalPodState:  pod.DeepCopy(),
-				Message:           message,
-				DebugMessage:      createDebugMessage(podEvents),
-				Retryable:         true,
-				DeletionRequested: false,
-				Type:              FailedStartingUp,
-			},
-			Reported: false,
-		})
-	} else {
-		return false, nil
+	// Classify once. ClassifyPodError also matches onPodError rules against the
+	// pod-level status message, which container-only classification misses.
+	// Classification only labels the failure. The retry decision stays with
+	// failedPodChecks until scheduler-side retry policies replace it.
+	result := p.classifier.ClassifyPodError(pod, pod.Status.Message)
+
+	retryable, message := p.failedPodChecker.IsRetryable(pod, podEvents)
+	if !retryable {
+		return false, result, nil
 	}
+
+	_, err = p.registerIssue(&runIssue{
+		JobId: jobId,
+		RunId: runId,
+		PodIssue: &podIssue{
+			OriginalPodState:  pod.DeepCopy(),
+			Message:           message,
+			DebugMessage:      createDebugMessage(podEvents),
+			Retryable:         true,
+			DeletionRequested: false,
+			Type:              FailedStartingUp,
+			Category:          result.Category,
+			Subcategory:       result.Subcategory,
+		},
+		Reported: false,
+	})
+	if err != nil {
+		return false, result, err
+	}
+	// Registered or not, the issue handler owns this pod now. A goroutine that
+	// loses the registration race must not emit a terminal Failed event
+	// alongside the winner's lease return.
+	return true, result, nil
 }
 
 func (p *PodIssueHandler) registerIssue(issue *runIssue) (bool, error) {
@@ -538,6 +565,8 @@ func (p *PodIssueHandler) handleRetryableJobIssue(issue *issue) {
 			issue.RunIssue.PodIssue.DebugMessage,
 			p.clusterContext.GetClusterId(),
 			jobRunAttempted,
+			issue.RunIssue.PodIssue.Category,
+			issue.RunIssue.PodIssue.Subcategory,
 		)
 		if err != nil {
 			log.Errorf("Failed to create return lease event for job %s because %s", issue.RunIssue.JobId, err)

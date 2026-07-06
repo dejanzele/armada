@@ -10,7 +10,7 @@ metricsPort: 9006
 postgres:
   connection:
     host: localhost
-    port: 5432
+    port: 5433
     user: postgres
     password: psw
     dbname: scheduler

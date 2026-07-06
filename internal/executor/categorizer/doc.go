@@ -70,7 +70,7 @@
 //	}
 //
 //	// Terminated pod: container state carries the relevant termination signals.
-//	result := classifier.ClassifyContainerError(pod)
+//	result := classifier.ClassifyPodError(pod, pod.Status.Message)
 //
 //	// Pre-terminal failure: an executor-captured error message is matched
 //	// against onPodError rules in addition to pod state.

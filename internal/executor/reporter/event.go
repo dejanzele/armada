@@ -295,7 +295,9 @@ func CreateMinimalJobFailedEvent(jobId string, runId string, jobSet string, queu
 	return sequence, nil
 }
 
-func CreateReturnLeaseEvent(pod *v1.Pod, reason string, debugMessage string, clusterId string, runAttempted bool) (*armadaevents.EventSequence, error) {
+func CreateReturnLeaseEvent(pod *v1.Pod, reason string, debugMessage string, clusterId string, runAttempted bool,
+	failureCategory string, failureSubcategory string,
+) (*armadaevents.EventSequence, error) {
 	sequence := createEmptySequence(pod)
 	jobId, runId, err := extractIds(pod)
 	if err != nil {
@@ -310,7 +312,9 @@ func CreateReturnLeaseEvent(pod *v1.Pod, reason string, debugMessage string, clu
 				JobId: jobId,
 				Errors: []*armadaevents.Error{
 					{
-						Terminal: true, // EventMessage_LeaseReturned indicates a pod could not be scheduled.
+						Terminal:           true, // EventMessage_LeaseReturned indicates a pod could not be scheduled.
+						FailureCategory:    failureCategory,
+						FailureSubcategory: failureSubcategory,
 						Reason: &armadaevents.Error_PodLeaseReturned{
 							PodLeaseReturned: &armadaevents.PodLeaseReturned{
 								ObjectMeta: &armadaevents.ObjectMeta{

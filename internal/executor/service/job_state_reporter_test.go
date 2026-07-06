@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,7 +12,6 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/armadaproject/armada/internal/common/errormatch"
 	"github.com/armadaproject/armada/internal/executor/categorizer"
 	fakecontext "github.com/armadaproject/armada/internal/executor/context/fake"
 	"github.com/armadaproject/armada/internal/executor/domain"
@@ -71,15 +71,15 @@ func TestJobStateReporter_HandlesPodAddEvents(t *testing.T) {
 		time.Sleep(time.Millisecond * 100) // Give time for async routine to process message
 
 		if test.expectEvent {
-			assertExpectedEvents(t, test.pod, eventReporter.ReceivedEvents, test.expectedType)
+			assertExpectedEvents(t, test.pod, eventReporter.GetReceivedEvents(), test.expectedType)
 		} else {
-			assert.Len(t, eventReporter.ReceivedEvents, 0)
+			assert.Len(t, eventReporter.GetReceivedEvents(), 0)
 		}
 
 		if test.expectAnnotation {
 			assertExpectedAnnotations(t, test.pod, fakeClusterContext)
 		} else {
-			assert.Len(t, fakeClusterContext.AnnotationsAdded, 0)
+			assert.Equal(t, 0, fakeClusterContext.CountPodsWithAddedAnnotations())
 		}
 	}
 }
@@ -117,11 +117,11 @@ func TestJobStateReporter_HandlesPodUpdateEvents(t *testing.T) {
 		time.Sleep(time.Millisecond * 100) // Give time for async routine to process message
 
 		if test.expectEvent {
-			assertExpectedEvents(t, before, eventReporter.ReceivedEvents, test.expectedType)
+			assertExpectedEvents(t, before, eventReporter.GetReceivedEvents(), test.expectedType)
 			assertExpectedAnnotations(t, after, fakeClusterContext)
 		} else {
-			assert.Len(t, eventReporter.ReceivedEvents, 0)
-			assert.Len(t, fakeClusterContext.AnnotationsAdded, 0)
+			assert.Len(t, eventReporter.GetReceivedEvents(), 0)
+			assert.Equal(t, 0, fakeClusterContext.CountPodsWithAddedAnnotations())
 		}
 	}
 }
@@ -135,51 +135,34 @@ func TestJobStateReporter_HandlesPodUpdateEvents_IgnoreUnmanagedPods(t *testing.
 	fakeClusterContext.SimulateUpdateAddEvent(before, after)
 	time.Sleep(time.Millisecond * 100) // Give time for async routine to process message
 
-	assert.Len(t, eventReporter.ReceivedEvents, 0)
+	assert.Len(t, eventReporter.GetReceivedEvents(), 0)
 }
 
-func TestJobStateReporter_HandlesFailedPod_WithRetryableError(t *testing.T) {
-	jobStateReporter, _, eventReporter, fakeClusterContext := setUpJobStateReporterTest(t)
+func TestJobStateReporter_PodFailed_EmitsEventWhenIssueHandlerErrors(t *testing.T) {
+	_, _, eventReporter, fakeClusterContext := setUpJobStateReporterTestWithIssueHandler(
+		t, &stubIssueHandler{detectAndRegisterFailedPodIssueError: fmt.Errorf("error")},
+	)
 
-	before := makeTestPod(v1.PodStatus{Phase: v1.PodRunning})
-	after := copyWithUpdatedPhase(before, v1.PodFailed)
+	pod := makeFailedPodWithExitCode(t, 42)
+	addPod(t, fakeClusterContext, pod)
+	fakeClusterContext.SimulatePodAddEvent(pod)
+	time.Sleep(time.Millisecond * 100)
 
-	// Does not send event if issue handler detects an issue
-	jobStateReporter.podIssueHandler = &stubIssueHandler{detectAndRegisterFailedPodIssueResult: true, detectAndRegisterFailedPodIssueError: nil}
-	fakeClusterContext.SimulateUpdateAddEvent(before, after)
-	time.Sleep(time.Millisecond * 100) // Give time for async routine to process message
-	assert.Len(t, eventReporter.ReceivedEvents, 0)
-
-	// Does not send event if issue handler already knows of issue for run
-	jobStateReporter.podIssueHandler = &stubIssueHandler{
-		runIdsWithIssues:                      map[string]bool{util.ExtractJobRunId(after): true},
-		detectAndRegisterFailedPodIssueResult: false,
-		detectAndRegisterFailedPodIssueError:  nil,
-	}
-	fakeClusterContext.SimulateUpdateAddEvent(before, after)
-	time.Sleep(time.Millisecond * 100) // Give time for async routine to process message
-	assert.Len(t, eventReporter.ReceivedEvents, 0)
-
-	// Does send event if issue handler errors
-	jobStateReporter.podIssueHandler = &stubIssueHandler{detectAndRegisterFailedPodIssueResult: false, detectAndRegisterFailedPodIssueError: fmt.Errorf("error")}
-	fakeClusterContext.SimulateUpdateAddEvent(before, after)
-	time.Sleep(time.Millisecond * 100) // Give time for async routine to process message
-	assert.Len(t, eventReporter.ReceivedEvents, 1)
-	assertExpectedEvents(t, before, eventReporter.ReceivedEvents, reflect.TypeOf(&armadaevents.EventSequence_Event_JobRunErrors{}))
+	require.Len(t, eventReporter.GetReceivedEvents(), 1, "a handler error must not swallow the terminal failure")
+	assertExpectedEvents(t, pod, eventReporter.GetReceivedEvents(), reflect.TypeOf(&armadaevents.EventSequence_Event_JobRunErrors{}))
 }
 
 func setUpJobStateReporterTest(t *testing.T) (*JobStateReporter, *stubIssueHandler, *mocks.FakeEventReporter, *fakecontext.SyncFakeClusterContext) {
-	return setUpJobStateReporterTestWithClassifier(t, nil, &stubIssueHandler{})
+	return setUpJobStateReporterTestWithIssueHandler(t, &stubIssueHandler{})
 }
 
-func setUpJobStateReporterTestWithClassifier(
+func setUpJobStateReporterTestWithIssueHandler(
 	t *testing.T,
-	classifier *categorizer.Classifier,
 	issueHandler *stubIssueHandler,
 ) (*JobStateReporter, *stubIssueHandler, *mocks.FakeEventReporter, *fakecontext.SyncFakeClusterContext) {
 	fakeClusterContext := fakecontext.NewSyncFakeClusterContext()
 	eventReporter := mocks.NewFakeEventReporter()
-	jobStateReporter, err := NewJobStateReporter(fakeClusterContext, eventReporter, issueHandler, classifier)
+	jobStateReporter, err := NewJobStateReporter(fakeClusterContext, eventReporter, issueHandler)
 	require.NoError(t, err)
 	return jobStateReporter, issueHandler, eventReporter, fakeClusterContext
 }
@@ -200,48 +183,34 @@ func makeFailedPodWithExitCode(t *testing.T, exitCode int32) *v1.Pod {
 	return pod
 }
 
-func classifierForExitCode(t *testing.T, category, subcategory string, exitCode int32) *categorizer.Classifier {
-	t.Helper()
-	c, err := categorizer.NewClassifier(categorizer.ErrorCategoriesConfig{
-		Categories: []categorizer.CategoryConfig{
-			{
-				Name: category,
-				Rules: []categorizer.CategoryRule{
-					{
-						OnExitCodes: &errormatch.ExitCodeMatcher{
-							Operator: errormatch.ExitCodeOperatorIn,
-							Values:   []int32{exitCode},
-						},
-						Subcategory: subcategory,
-					},
-				},
-			},
-		},
-	})
-	require.NoError(t, err)
-	return c
-}
-
 // The metric counter itself is tested in the metrics package.
 // These tests cover the emission gating that governs when the counter is
 // advanced: a JobFailedEvent must be emitted (not a ReturnLease or a no-op).
+// Classification happens once, inside the issue handler. The reporter builds
+// the Failed event from the result the handler returns.
 
-func TestJobStateReporter_PodFailed_EmitsJobFailedEventWhenClassifierMatches(t *testing.T) {
-	classifier := classifierForExitCode(t, "jsr-emit-cat", "jsr-emit-sub", 42)
-	_, _, eventReporter, fakeClusterContext := setUpJobStateReporterTestWithClassifier(t, classifier, &stubIssueHandler{})
+func TestJobStateReporter_PodFailed_EmitsFailedEventFromHandlerClassification(t *testing.T) {
+	stub := &stubIssueHandler{
+		classifyResult: categorizer.ClassifyResult{Category: "jsr-emit-cat", Subcategory: "jsr-emit-sub"},
+	}
+	_, _, eventReporter, fakeClusterContext := setUpJobStateReporterTestWithIssueHandler(t, stub)
 
 	pod := makeFailedPodWithExitCode(t, 42)
 	addPod(t, fakeClusterContext, pod)
 	fakeClusterContext.SimulatePodAddEvent(pod)
 	time.Sleep(time.Millisecond * 100)
 
-	assert.Len(t, eventReporter.ReceivedEvents, 1)
+	require.Len(t, eventReporter.GetReceivedEvents(), 1)
+	failedEvent, ok := eventReporter.GetReceivedEvents()[0].Event.Events[0].Event.(*armadaevents.EventSequence_Event_JobRunErrors)
+	require.True(t, ok)
+	assert.Equal(t, "jsr-emit-cat", failedEvent.JobRunErrors.Errors[0].GetFailureCategory())
+	assert.Equal(t, "jsr-emit-sub", failedEvent.JobRunErrors.Errors[0].GetFailureSubcategory())
+	assert.Equal(t, int32(1), stub.detectCalls.Load(), "classification must happen exactly once, in the issue handler")
 }
 
 func TestJobStateReporter_PodFailed_SuppressesEmissionWhenRetryableIssueRegistered(t *testing.T) {
-	classifier := classifierForExitCode(t, "jsr-retryable-cat", "jsr-retryable-sub", 42)
-	_, _, eventReporter, fakeClusterContext := setUpJobStateReporterTestWithClassifier(
-		t, classifier,
+	_, _, eventReporter, fakeClusterContext := setUpJobStateReporterTestWithIssueHandler(
+		t,
 		&stubIssueHandler{detectAndRegisterFailedPodIssueResult: true},
 	)
 
@@ -250,27 +219,24 @@ func TestJobStateReporter_PodFailed_SuppressesEmissionWhenRetryableIssueRegister
 	fakeClusterContext.SimulatePodAddEvent(pod)
 	time.Sleep(time.Millisecond * 100)
 
-	assert.Len(t, eventReporter.ReceivedEvents, 0, "retryable issue path emits ReturnLease, not JobFailed")
+	assert.Len(t, eventReporter.GetReceivedEvents(), 0, "retryable issue path emits ReturnLease, not JobFailed")
 }
 
 func TestJobStateReporter_PodFailed_SuppressesEmissionWhenIssueAlreadyExists(t *testing.T) {
-	classifier := classifierForExitCode(t, "jsr-existing-cat", "jsr-existing-sub", 42)
 	pod := makeFailedPodWithExitCode(t, 42)
-	_, _, eventReporter, fakeClusterContext := setUpJobStateReporterTestWithClassifier(
-		t, classifier,
-		&stubIssueHandler{runIdsWithIssues: map[string]bool{util.ExtractJobRunId(pod): true}},
-	)
+	stub := &stubIssueHandler{runIdsWithIssues: map[string]bool{util.ExtractJobRunId(pod): true}}
+	_, _, eventReporter, fakeClusterContext := setUpJobStateReporterTestWithIssueHandler(t, stub)
 
 	addPod(t, fakeClusterContext, pod)
 	fakeClusterContext.SimulatePodAddEvent(pod)
 	time.Sleep(time.Millisecond * 100)
 
-	assert.Len(t, eventReporter.ReceivedEvents, 0, "run already owned by issue handler - no direct emission from this path")
+	assert.Len(t, eventReporter.GetReceivedEvents(), 0, "run already owned by issue handler - no direct emission from this path")
+	assert.Equal(t, int32(0), stub.detectCalls.Load(), "no detection attempt when the run already has an issue")
 }
 
 func TestJobStateReporter_PodFailed_DropsEventWhenReporterErrors(t *testing.T) {
-	classifier := classifierForExitCode(t, "jsr-report-error-cat", "jsr-report-error-sub", 42)
-	_, _, eventReporter, fakeClusterContext := setUpJobStateReporterTestWithClassifier(t, classifier, &stubIssueHandler{})
+	_, _, eventReporter, fakeClusterContext := setUpJobStateReporterTestWithIssueHandler(t, &stubIssueHandler{})
 	eventReporter.ErrorOnReport = true
 
 	pod := makeFailedPodWithExitCode(t, 42)
@@ -278,18 +244,22 @@ func TestJobStateReporter_PodFailed_DropsEventWhenReporterErrors(t *testing.T) {
 	fakeClusterContext.SimulatePodAddEvent(pod)
 	time.Sleep(time.Millisecond * 100)
 
-	assert.Len(t, eventReporter.ReceivedEvents, 0, "event is dropped when reporter errors - counter increment is gated behind successful emission")
+	assert.Len(t, eventReporter.GetReceivedEvents(), 0, "event is dropped when reporter errors - counter increment is gated behind successful emission")
 }
 
-func TestJobStateReporter_PodFailed_EmitsEventWithEmptyCategoryWhenClassifierIsNil(t *testing.T) {
-	_, _, eventReporter, fakeClusterContext := setUpJobStateReporterTestWithClassifier(t, nil, &stubIssueHandler{})
+func TestJobStateReporter_PodFailed_EmitsEventWithEmptyCategoryWhenClassificationDisabled(t *testing.T) {
+	_, _, eventReporter, fakeClusterContext := setUpJobStateReporterTestWithIssueHandler(t, &stubIssueHandler{})
 
 	pod := makeFailedPodWithExitCode(t, 42)
 	addPod(t, fakeClusterContext, pod)
 	fakeClusterContext.SimulatePodAddEvent(pod)
 	time.Sleep(time.Millisecond * 100)
 
-	assert.Len(t, eventReporter.ReceivedEvents, 1, "event still emitted with empty category/subcategory when classification is disabled")
+	require.Len(t, eventReporter.GetReceivedEvents(), 1, "event still emitted with empty category/subcategory when classification is disabled")
+	failedEvent, ok := eventReporter.GetReceivedEvents()[0].Event.Events[0].Event.(*armadaevents.EventSequence_Event_JobRunErrors)
+	require.True(t, ok)
+	assert.Empty(t, failedEvent.JobRunErrors.Errors[0].GetFailureCategory())
+	assert.Empty(t, failedEvent.JobRunErrors.Errors[0].GetFailureSubcategory())
 }
 
 func assertExpectedEvents(t *testing.T, pod *v1.Pod, messages []reporter.EventMessage, expectedType reflect.Type) {
@@ -306,7 +276,7 @@ func assertExpectedEvents(t *testing.T, pod *v1.Pod, messages []reporter.EventMe
 }
 
 func assertExpectedAnnotations(t *testing.T, pod *v1.Pod, clusterContext *fakecontext.SyncFakeClusterContext) {
-	jobAnnotations := clusterContext.AnnotationsAdded[util.ExtractJobId(pod)]
+	jobAnnotations := clusterContext.GetAddedAnnotations(util.ExtractJobId(pod))
 	assert.Len(t, jobAnnotations, 1)
 	_, exists := jobAnnotations[string(pod.Status.Phase)]
 	assert.True(t, exists)
@@ -315,7 +285,11 @@ func assertExpectedAnnotations(t *testing.T, pod *v1.Pod, clusterContext *fakeco
 type stubIssueHandler struct {
 	runIdsWithIssues                      map[string]bool
 	detectAndRegisterFailedPodIssueResult bool
+	classifyResult                        categorizer.ClassifyResult
 	detectAndRegisterFailedPodIssueError  error
+	// detectCalls counts DetectAndRegisterFailedPodIssue invocations. Atomic
+	// because reportCurrentStatus runs on a goroutine spawned by the informer.
+	detectCalls atomic.Int32
 }
 
 func (s *stubIssueHandler) HasIssue(runId string) bool {
@@ -323,8 +297,9 @@ func (s *stubIssueHandler) HasIssue(runId string) bool {
 	return exists
 }
 
-func (s *stubIssueHandler) DetectAndRegisterFailedPodIssue(pod *v1.Pod) (bool, error) {
-	return s.detectAndRegisterFailedPodIssueResult, s.detectAndRegisterFailedPodIssueError
+func (s *stubIssueHandler) DetectAndRegisterFailedPodIssue(pod *v1.Pod) (bool, categorizer.ClassifyResult, error) {
+	s.detectCalls.Add(1)
+	return s.detectAndRegisterFailedPodIssueResult, s.classifyResult, s.detectAndRegisterFailedPodIssueError
 }
 
 func copyWithUpdatedPhase(pod *v1.Pod, newPhase v1.PodPhase) *v1.Pod {
