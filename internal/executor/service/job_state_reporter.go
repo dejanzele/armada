@@ -19,20 +19,17 @@ type JobStateReporter struct {
 	eventReporter   reporter.EventReporter
 	clusterContext  clusterContext.ClusterContext
 	podIssueHandler IssueHandler
-	classifier      *categorizer.Classifier
 }
 
 func NewJobStateReporter(
 	clusterContext clusterContext.ClusterContext,
 	eventReporter reporter.EventReporter,
 	podIssueHandler IssueHandler,
-	classifier *categorizer.Classifier,
 ) (*JobStateReporter, error) {
 	stateReporter := &JobStateReporter{
 		eventReporter:   eventReporter,
 		clusterContext:  clusterContext,
 		podIssueHandler: podIssueHandler,
-		classifier:      classifier,
 	}
 
 	_, err := clusterContext.AddPodEventHandler(stateReporter.podEventHandler())
@@ -91,32 +88,32 @@ func (stateReporter *JobStateReporter) reportCurrentStatus(pod *v1.Pod) {
 		return
 	}
 
+	// For failed pods the issue handler gets first refusal: retryable failures
+	// become lease returns rather than terminal Failed events. It classifies
+	// the failure exactly once and hands the result back so the Failed event
+	// can be built from it when the pod is not handled.
 	var classifyResult categorizer.ClassifyResult
 	if pod.Status.Phase == v1.PodFailed {
-		classifyResult = stateReporter.classifier.ClassifyContainerError(pod)
-	}
-
-	event, err := reporter.CreateEventForCurrentState(pod, stateReporter.clusterContext.GetClusterId(), classifyResult)
-	if err != nil {
-		log.Errorf("Failed to report event: %v", err)
-		return
-	}
-
-	if pod.Status.Phase == v1.PodFailed {
-		hasIssue := stateReporter.podIssueHandler.HasIssue(util.ExtractJobRunId(pod))
-		if hasIssue {
+		if stateReporter.podIssueHandler.HasIssue(util.ExtractJobRunId(pod)) {
 			// Pod already being handled by issue handler
 			return
 		}
-		issueAdded, err := stateReporter.podIssueHandler.DetectAndRegisterFailedPodIssue(pod)
-		if issueAdded {
-			// Pod already being handled by issue handler
+		handled, result, err := stateReporter.podIssueHandler.DetectAndRegisterFailedPodIssue(pod)
+		if handled {
+			// Pod now being handled by issue handler
 			return
 		}
 		if err != nil {
 			log.Errorf("Failed detecting issue on failed pod %s(%s) - %v", pod.Name, util.ExtractJobRunId(pod), err)
 			// Don't return here, as it is very important we don't block reporting a terminal event (failed)
 		}
+		classifyResult = result
+	}
+
+	event, err := reporter.CreateEventForCurrentState(pod, stateReporter.clusterContext.GetClusterId(), classifyResult)
+	if err != nil {
+		log.Errorf("Failed to report event: %v", err)
+		return
 	}
 
 	stateReporter.eventReporter.QueueEvent(reporter.EventMessage{Event: event, JobRunId: util.ExtractJobRunId(pod)}, func(err error) {

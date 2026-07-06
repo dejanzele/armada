@@ -3,6 +3,7 @@ package fake
 import (
 	"errors"
 	"fmt"
+	"sync"
 
 	v1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
@@ -17,11 +18,17 @@ import (
 )
 
 type SyncFakeClusterContext struct {
-	Pods             map[string]*v1.Pod
-	Events           map[string][]*v1.Event
+	Pods map[string]*v1.Pod
+	// Events and GetPodEventsErr must be configured before handlers run.
+	Events          map[string][]*v1.Event
+	GetPodEventsErr error
+	// AnnotationsAdded may be read directly only by tests that drive the
+	// context synchronously. Tests whose handlers run on another goroutine
+	// must use GetAddedAnnotations to avoid data races.
 	AnnotationsAdded map[string]map[string]string
 	podEventHandlers []*cache.ResourceEventHandlerFuncs
-	GetPodEventsErr  error
+
+	annotationMutex sync.Mutex
 }
 
 func NewSyncFakeClusterContext() *SyncFakeClusterContext {
@@ -106,12 +113,40 @@ func (c *SyncFakeClusterContext) SubmitPod(pod *v1.Pod, owner string, ownerGroup
 }
 
 func (c *SyncFakeClusterContext) AddAnnotation(pod *v1.Pod, annotations map[string]string) error {
-	pod.Annotations = util.MergeMaps(pod.Annotations, annotations)
+	// Only record the annotations. Mutating the caller's pod in place would
+	// race with test goroutines that still hold and read the same pod object.
+	c.annotationMutex.Lock()
+	defer c.annotationMutex.Unlock()
 	if c.AnnotationsAdded[pod.Labels[domain.JobId]] == nil {
 		c.AnnotationsAdded[pod.Labels[domain.JobId]] = map[string]string{}
 	}
 	c.AnnotationsAdded[pod.Labels[domain.JobId]] = util.MergeMaps(c.AnnotationsAdded[pod.Labels[domain.JobId]], annotations)
 	return nil
+}
+
+// GetAddedAnnotations returns a snapshot of the annotations recorded for the
+// given job id, or nil when none were added. Safe to call while handlers run
+// on other goroutines.
+func (c *SyncFakeClusterContext) GetAddedAnnotations(jobId string) map[string]string {
+	c.annotationMutex.Lock()
+	defer c.annotationMutex.Unlock()
+	annotations, exists := c.AnnotationsAdded[jobId]
+	if !exists {
+		return nil
+	}
+	result := make(map[string]string, len(annotations))
+	for k, v := range annotations {
+		result[k] = v
+	}
+	return result
+}
+
+// CountPodsWithAddedAnnotations returns how many pods have had annotations
+// recorded. Safe to call while handlers run on other goroutines.
+func (c *SyncFakeClusterContext) CountPodsWithAddedAnnotations() int {
+	c.annotationMutex.Lock()
+	defer c.annotationMutex.Unlock()
+	return len(c.AnnotationsAdded)
 }
 
 func (c *SyncFakeClusterContext) DeletePodWithCondition(pod *v1.Pod, condition func(pod *v1.Pod) bool, pessimistic bool) error {

@@ -31,7 +31,7 @@ eventsApiRedis:
 postgres:
   connection:
     host: localhost
-    port: 5432
+    port: 5433
     user: postgres
     password: psw
     dbname: lookout
@@ -40,7 +40,7 @@ queryapi:
   postgres:
     connection:
       host: localhost
-      port: 5432
+      port: 5433
       user: postgres
       password: psw
       dbname: lookout

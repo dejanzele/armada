@@ -209,7 +209,11 @@ func (c *Classifier) classify(pod *v1.Pod, podErrorMessage string) ClassifyResul
 			matched := ruleMatches(r, containers, podReason, podErrorMessage)
 			metrics.RecordRuleEvaluationDuration(cat.name, r.subcategory, time.Since(start))
 			if matched {
-				return ClassifyResult{Category: cat.name, Subcategory: r.subcategory, Hint: r.hint}
+				return ClassifyResult{
+					Category:    cat.name,
+					Subcategory: r.subcategory,
+					Hint:        r.hint,
+				}
 			}
 		}
 	}
