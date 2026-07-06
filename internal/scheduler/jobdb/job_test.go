@@ -422,6 +422,67 @@ func TestJob_TestNumAttempts(t *testing.T) {
 	assert.Equal(t, uint(2), returned3.NumAttempts())
 }
 
+func TestJob_TestFailureCountAndPreemptionCount(t *testing.T) {
+	failedRun := func() *JobRun {
+		return &JobRun{
+			id:      uuid.New().String(),
+			created: baseRun.created,
+			failed:  true,
+		}
+	}
+
+	// A preempted run may also be marked failed; it must count as a
+	// preemption only, never as a failure.
+	preemptedRun := func(failed bool) *JobRun {
+		return &JobRun{
+			id:        uuid.New().String(),
+			created:   baseRun.created,
+			failed:    failed,
+			preempted: true,
+			// Set alongside preempted, mirroring WithPreempted and CreateRun:
+			// production code never has preempted without everPreempted.
+			everPreempted: true,
+		}
+	}
+
+	succeededRun := func() *JobRun {
+		return &JobRun{
+			id:        uuid.New().String(),
+			created:   baseRun.created,
+			succeeded: true,
+		}
+	}
+
+	// initial job has no runs
+	assert.Equal(t, uint32(0), baseJob.FailureCount())
+	assert.Equal(t, uint32(0), baseJob.PreemptionCount())
+
+	// one genuine failure
+	job := baseJob.WithUpdatedRun(failedRun())
+	assert.Equal(t, uint32(1), job.FailureCount())
+	assert.Equal(t, uint32(0), job.PreemptionCount())
+
+	// a preempted run that is also failed counts only as a preemption
+	job = job.WithUpdatedRun(preemptedRun(true))
+	assert.Equal(t, uint32(1), job.FailureCount())
+	assert.Equal(t, uint32(1), job.PreemptionCount())
+
+	// a preempted run that is not failed still counts as a preemption
+	job = job.WithUpdatedRun(preemptedRun(false))
+	assert.Equal(t, uint32(1), job.FailureCount())
+	assert.Equal(t, uint32(2), job.PreemptionCount())
+
+	// a succeeded run counts as neither
+	job = job.WithUpdatedRun(succeededRun())
+	assert.Equal(t, uint32(1), job.FailureCount())
+	assert.Equal(t, uint32(2), job.PreemptionCount())
+
+	// a second genuine failure
+	job = job.WithUpdatedRun(failedRun())
+	assert.Equal(t, uint32(2), job.FailureCount())
+	assert.Equal(t, uint32(2), job.PreemptionCount())
+}
+
 func TestJob_TestRunsById(t *testing.T) {
 	runs := make([]*JobRun, 10)
 	job := baseJob
