@@ -431,7 +431,7 @@ func TestJob_TestFailureCountAndPreemptionCount(t *testing.T) {
 		}
 	}
 
-	// A preempted run may also be marked failed; it must count as a
+	// A preempted run may also be marked failed. It must count as a
 	// preemption only, never as a failure.
 	preemptedRun := func(failed bool) *JobRun {
 		return &JobRun{

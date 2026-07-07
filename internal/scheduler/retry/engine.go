@@ -41,7 +41,7 @@ type Counts struct {
 //
 // All limits count retries, not attempts: RetryLimit=3 allows 3 retries after
 // the initial run, i.e. 4 attempts total. globalMaxRetries=0 disables all
-// retries (kill switch); there is no unlimited setting for the global cap.
+// retries (kill switch). There is no unlimited setting for the global cap.
 // RetryLimit=0 means no per-policy bound, so only the global cap applies.
 //
 // The global cap is enforced against TotalRuns, so it counts every run
@@ -50,7 +50,7 @@ type Counts struct {
 // genuine failures consume Failures. This keeps preemptions (the scheduler's
 // own action) from eating into a job's failure retry budget and vice versa.
 //
-// policy must not be nil; runError may be nil (treated as "no decision").
+// policy must not be nil. runError may be nil (treated as "no decision").
 func (e *Engine) Evaluate(policy *Policy, runError *armadaevents.Error, counts Counts) Result {
 	if runError == nil {
 		return Result{ShouldRetry: false, Reason: reasonNoErrorAvailable}

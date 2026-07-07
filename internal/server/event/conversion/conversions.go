@@ -282,7 +282,7 @@ func FromInternalJobErrors(queueName string, jobSetName string, time time.Time, 
 	events := make([]*api.EventMessage, 0)
 	for _, msgErr := range e.GetErrors() {
 		// Terminal=false means the scheduler will spin up another run for
-		// this job; only the retry-policy engine emits that flavour. Every
+		// this job. Only the retry-policy engine emits that flavour. Every
 		// other emitter keeps Terminal=true, so existing API consumers see
 		// the same event contract as before. On the way out the polarity
 		// flips: Terminal=false maps to Retryable=true on JobFailedEvent.

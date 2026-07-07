@@ -50,7 +50,7 @@ func convertAction(a api.RetryAction) (Action, error) {
 		return ActionRetry, nil
 	default:
 		// Treat RETRY_ACTION_UNSPECIFIED and any unknown value as a hard
-		// error; silently defaulting could turn a truncated proto into a
+		// error. Silently defaulting could turn a truncated proto into a
 		// policy that retries everything.
 		return "", fmt.Errorf("unknown action %q", a.String())
 	}

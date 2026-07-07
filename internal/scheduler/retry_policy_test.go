@@ -352,7 +352,7 @@ func classifyEvents(events []*armadaevents.EventSequence_Event) (hasRequeue bool
 }
 
 // hasTerminalError reports whether any emitted JobErrors carries a terminal
-// Error - the engine retry path must emit only non-terminal errors so the
+// Error. The engine retry path must emit only non-terminal errors so the
 // api conversion stamps retryable=true on the resulting JobFailedEvent.
 func hasTerminalError(events []*armadaevents.EventSequence_Event) bool {
 	for _, e := range events {
@@ -423,7 +423,7 @@ func TestRetryPolicy_FFOn_GangJobSkipped(t *testing.T) {
 func TestRetryPolicy_FFOn_GlobalCapCountsAllRuns(t *testing.T) {
 	policy, err := retry.ConvertPolicy(&api.RetryPolicy{
 		Name:          "test-policy",
-		RetryLimit:    0, // no per-policy bound; global cap is the only gate
+		RetryLimit:    0, // no per-policy bound, global cap is the only gate
 		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
 		Rules: []*api.RetryRule{{
 			Action:      api.RetryAction_RETRY_ACTION_RETRY,
@@ -442,7 +442,7 @@ func TestRetryPolicy_FFOn_GlobalCapCountsAllRuns(t *testing.T) {
 		toInternalSchedulingInfo(schedulingInfo),
 		false, 1, false, false, false, 1, true,
 	)
-	// Add three preempted-but-not-failed runs - the scheduler-algo preemption
+	// Add three preempted-but-not-failed runs, the scheduler-algo preemption
 	// shape that creates new runs without burning policy-retry budget.
 	for i := 0; i < 3; i++ {
 		preemptedRun := sched.jobDb.CreateRun(
@@ -602,14 +602,14 @@ func TestRetryPolicy_FFOn_UserPreemptTerminalWhenNoMatch(t *testing.T) {
 }
 
 // TestRetryPolicy_FFOn_UserPreemptCountsCurrentRunAgainstLimit pins that the
-// retry limit applies to the preemption being evaluated, not just to prior
+// retry limit applies to the preemption being evaluated as well as to prior
 // runs. The branch fires while lastRun is not yet terminal, so we must mark
 // the run preempted before consulting the engine. Without that,
 // PreemptionCount() returns N-1 instead of N and retryLimit is off-by-one.
 func TestRetryPolicy_FFOn_UserPreemptCountsCurrentRunAgainstLimit(t *testing.T) {
 	policy, err := retry.ConvertPolicy(&api.RetryPolicy{
 		Name:          "preempt-policy",
-		RetryLimit:    1, // 1 retry allowed; the second preemption must be terminal
+		RetryLimit:    1, // 1 retry allowed, the second preemption must be terminal
 		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
 		Rules: []*api.RetryRule{{
 			Action:       api.RetryAction_RETRY_ACTION_RETRY,

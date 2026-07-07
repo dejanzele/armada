@@ -6,7 +6,7 @@ const PodNamePrefix string = "armada-"
 
 // PodName returns the canonical pod name for a job. When runIndex is non-nil
 // (retry-policy engine populated JobRunIndex), it is appended as a suffix to
-// disambiguate retry attempts; otherwise the legacy single-attempt format is
+// disambiguate retry attempts. Otherwise the legacy single-attempt format is
 // used. This is the only place that owns the pod-name format.
 func PodName(jobId string, runIndex *uint32) string {
 	name := PodNamePrefix + jobId + "-0"

@@ -61,7 +61,7 @@ func (c *ApiPolicyCache) Initialise(ctx *armadacontext.Context) error {
 
 // Run refreshes the cache on the configured interval until ctx is cancelled.
 // Errors are logged but do not stop the loop, consistent with QueueCache.Run.
-// The first refresh happens on the first tick; call Initialise to prime.
+// The first refresh happens on the first tick. Call Initialise to prime.
 func (c *ApiPolicyCache) Run(ctx *armadacontext.Context) error {
 	ticker := time.NewTicker(c.updateFrequency)
 	defer ticker.Stop()
@@ -100,7 +100,7 @@ func (c *ApiPolicyCache) fetch(ctx *armadacontext.Context) error {
 	for _, p := range resp.RetryPolicies {
 		policy, err := ConvertPolicy(p)
 		if err != nil {
-			// One bad policy must not poison the entire cache; log and skip.
+			// One bad policy must not poison the entire cache, so log it and skip.
 			ctx.Warnf("skipping invalid retry policy %q: %v", p.GetName(), err)
 			continue
 		}

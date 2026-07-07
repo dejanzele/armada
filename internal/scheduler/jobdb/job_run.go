@@ -16,7 +16,7 @@ type JobRun struct {
 	// Unique identifier for the run.
 	id string
 	// Zero-based attempt counter for this run within its job. The first run is
-	// always 0; incremented when the scheduler retries a failed run under a
+	// always 0. Incremented when the scheduler retries a failed run under a
 	// retry policy. Used by the executor to disambiguate pod names across
 	// attempts.
 	index uint32

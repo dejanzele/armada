@@ -125,7 +125,7 @@ func (r *PostgresRetryPolicyRepository) UpdateRetryPolicy(ctx *armadacontext.Con
 }
 
 // DeleteRetryPolicy removes a retry policy by name.
-// Deletes are intentionally idempotent - deleting a non-existent policy is a no-op,
+// Deletes are intentionally idempotent. Deleting a non-existent policy is a no-op,
 // consistent with DeleteQueue in queue_repository.go.
 func (r *PostgresRetryPolicyRepository) DeleteRetryPolicy(ctx *armadacontext.Context, name string) error {
 	query := "DELETE FROM retry_policy WHERE name = $1"

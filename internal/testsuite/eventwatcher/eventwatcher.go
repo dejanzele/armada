@@ -226,7 +226,7 @@ func assertEventErrorString(expected []*api.EventMessage, indexByJobId map[strin
 func isTerminalEvent(msg *api.EventMessage) bool {
 	switch e := msg.Events.(type) {
 	case *api.EventMessage_Failed:
-		// Retryable failures are intermediate; the scheduler will re-lease
+		// Retryable failures are intermediate. The scheduler will re-lease
 		// the job, so keep consuming until a truly terminal event arrives.
 		return !e.Failed.GetRetryable()
 	case *api.EventMessage_Succeeded:
@@ -273,7 +273,7 @@ func ErrorOnNoActiveJobs(parent context.Context, C chan *api.EventMessage, jobId
 					numActive--
 				}
 			} else if e := msg.GetFailed(); e != nil {
-				// Retryable failures are intermediate; skip them so the
+				// Retryable failures are intermediate. Skip them so the
 				// watcher stays alive past the retry boundary.
 				if e.GetRetryable() {
 					continue

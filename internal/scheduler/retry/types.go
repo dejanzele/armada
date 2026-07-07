@@ -26,7 +26,7 @@ type Policy struct {
 
 // Rule defines a single matching rule within a policy.
 // All non-empty match fields must match for the rule to apply (AND logic across fields).
-// OnSubcategory is only valid when OnCategory is set; it narrows a category match.
+// OnSubcategory is only valid when OnCategory is set. It narrows a category match.
 type Rule struct {
 	Action               Action
 	OnConditions         []string
@@ -36,7 +36,7 @@ type Rule struct {
 	OnSubcategory        string
 
 	// compiledTerminationMessage holds the pre-compiled regex from OnTerminationMessage.
-	// Populated by CompileRules; nil when OnTerminationMessage is nil.
+	// Populated by CompileRules. Nil when OnTerminationMessage is nil.
 	compiledTerminationMessage *regexp.Regexp
 }
 

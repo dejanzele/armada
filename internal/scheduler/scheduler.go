@@ -119,11 +119,11 @@ type Scheduler struct {
 	// Used to look up queue state (e.g., cordoned status)
 	queueCache queue.QueueCache
 	// Retry policy configuration. When retryPolicyConfig.Enabled is true, the
-	// scheduler consults the engine on every run failure; otherwise the
+	// scheduler consults the engine on every run failure. When false, the
 	// failure-handling path is identical to the pre-feature behaviour.
 	retryPolicyConfig configuration.RetryPolicyConfig
 	// Compiled retry-policy lookup, populated by the cache loop. Always
-	// non-nil; a NoopPolicyCache is used when the feature flag is off so we
+	// non-nil. A NoopPolicyCache is used when the feature flag is off so we
 	// never need a nil check at the call site.
 	retryPolicyCache retry.PolicyCache
 	// Engine evaluating retry decisions. Always non-nil so the call site can
@@ -155,7 +155,7 @@ func NewScheduler(
 ) (*Scheduler, error) {
 	if retryPolicyCache == nil {
 		// Always non-nil so callers in the failure path do not need a nil
-		// check; NoopPolicyCache reports every name as missing, which makes
+		// check. NoopPolicyCache reports every name as missing, which makes
 		// the engine call fall through to the legacy path.
 		retryPolicyCache = retry.NoopPolicyCache{}
 	}
@@ -1049,7 +1049,7 @@ func AppendEventSequencesFromScheduledJobs(eventSequences []*armadaevents.EventS
 // human-readable reason, and a `decided` flag. `decided=false` means the
 // engine did not run (no policy assigned, policy missing from cache, or no
 // run-error yet) and the caller must fall through to legacy behaviour.
-// `decided=true` is authoritative - the engine's verdict wins.
+// `decided=true` is authoritative: the engine's verdict wins.
 func (s *Scheduler) evaluateRetryPolicy(
 	ctx *armadacontext.Context,
 	job *jobdb.Job,
@@ -1101,7 +1101,7 @@ func (s *Scheduler) evaluateRetryPolicy(
 // the scheduling algorithm preempted this cycle. When the engine matches a
 // Retry rule on Preempted, it overrides the algo's terminal-fail by flipping
 // the job back to Queued and bumping QueuedVersion. The run keeps failed=true
-// (already set by the algo) - that survives jobdb reconciliation and dedupes
+// (already set by the algo), which survives jobdb reconciliation and dedupes
 // any later revisit of this run. Returns the set of job ids that should emit
 // a retry tuple instead of the usual terminal preemption events.
 func (s *Scheduler) applyRetryPolicyToAlgoPreemptions(
@@ -1125,7 +1125,7 @@ func (s *Scheduler) applyRetryPolicyToAlgoPreemptions(
 		// already set, before consulting the engine: PreemptionCount() must
 		// include the run being evaluated or the policy retry limit is
 		// off-by-one, and FailureCount() must exclude it so the failure
-		// budget is untouched. The mutation is only persisted on retry; on
+		// budget is untouched. The mutation is only persisted on retry. On
 		// no-retry the algo's terminal state is left exactly as it was.
 		job = job.WithUpdatedRun(run.WithPreempted(true))
 		shouldRetry, _, decided := s.evaluateRetryPolicy(ctx, job, newPreemptedRunError(jctx.PreemptionDescription), queueRetryPolicies)
@@ -1449,7 +1449,7 @@ func (s *Scheduler) generateUpdateMessagesFromJob(ctx *armadacontext.Context, jo
 				// `!lastRun.Failed()` in the branch condition is the dedupe
 				// guard, only active with the feature flag on. preempt_requested
 				// stays true even after a retry-driven re-lease (it only clears
-				// on terminal). We mark the run failed below; failed survives
+				// on terminal). We mark the run failed below. Failed survives
 				// reconciliation (enforceTerminalStateExclusivity prefers Failed
 				// over Preempted), so a re-fired branch on the next cycle reads
 				// Failed=true and skips.
@@ -1463,7 +1463,7 @@ func (s *Scheduler) generateUpdateMessagesFromJob(ctx *armadacontext.Context, jo
 
 				// Synthesise a JobRunPreemptedError so policies with
 				// `onConditions: ["Preempted"]` match. The run is dead either
-				// way; only the job-level retry vs terminal-fail is engine-driven.
+				// way. Only the job-level retry vs terminal-fail is engine-driven.
 				shouldRetry, _, decided := s.evaluateRetryPolicy(ctx, job, newPreemptedRunError(reason), queueRetryPolicies)
 
 				if decided && shouldRetry {
