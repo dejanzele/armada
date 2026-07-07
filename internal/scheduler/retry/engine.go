@@ -44,11 +44,14 @@ type Counts struct {
 // retries (kill switch). There is no unlimited setting for the global cap.
 // RetryLimit=0 means no per-policy bound, so only the global cap applies.
 //
-// The global cap is enforced against TotalRuns, so it counts every run
-// including legacy lease returns. The per-policy limit is enforced against
-// the tally matching the error type: preemption retries consume Preemptions,
-// genuine failures consume Failures. This keeps preemptions (the scheduler's
-// own action) from eating into a job's failure retry budget and vice versa.
+// The global cap and the per-policy limit both exclude preemptions. A
+// preemption is the scheduler's own action, not something the job did, so it
+// must not consume either retry budget: otherwise a preemptible job in a
+// contended cluster is terminally failed by the scheduler's own preemptions,
+// denied genuine-failure retries it is well within its policy budget for. The
+// per-policy limit picks the tally matching the error type (preemption retries
+// consume Preemptions, genuine failures consume Failures); the global cap
+// counts every non-preemption run.
 //
 // policy must not be nil. runError may be nil (treated as "no decision").
 func (e *Engine) Evaluate(policy *Policy, runError *armadaevents.Error, counts Counts) Result {
@@ -59,9 +62,16 @@ func (e *Engine) Evaluate(policy *Policy, runError *armadaevents.Error, counts C
 	if e.globalMaxRetries == 0 {
 		return Result{ShouldRetry: false, Reason: reasonRetriesDisabled, Decision: DecisionFailGlobalLimit}
 	}
+	// Count only non-preemption runs against the global cap.
+	genuineRuns := counts.TotalRuns
+	if uint(counts.Preemptions) < genuineRuns {
+		genuineRuns -= uint(counts.Preemptions)
+	} else {
+		genuineRuns = 0
+	}
 	retriesUsed := uint(0)
-	if counts.TotalRuns > 0 {
-		retriesUsed = counts.TotalRuns - 1
+	if genuineRuns > 0 {
+		retriesUsed = genuineRuns - 1
 	}
 	if retriesUsed >= e.globalMaxRetries {
 		return Result{

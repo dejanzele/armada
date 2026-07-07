@@ -879,6 +879,23 @@ func (job *Job) AllRuns() []*JobRun {
 	return maps.Values(job.runsById)
 }
 
+// RetryCounts returns, in a single pass over the job's runs, the counts the
+// retry engine needs: genuine failures (excluding preempted runs), preemptions,
+// and the total run count. It replaces three separate O(runs) passes on the
+// per-failed-job hot path with one and avoids allocating a run slice just to
+// take its length.
+func (job *Job) RetryCounts() (failures uint32, preemptions uint32, total uint) {
+	for _, run := range job.runsById {
+		total++
+		if run.everPreempted {
+			preemptions++
+		} else if run.failed {
+			failures++
+		}
+	}
+	return failures, preemptions, total
+}
+
 // LatestRun returns the currently active job run or nil if there are no runs yet.
 // Callers should either guard against nil values explicitly or via HasRuns.
 func (job *Job) LatestRun() *JobRun {

@@ -39,21 +39,20 @@ var (
 	// retryPolicyGangSkippedCounter counts gang jobs that would have been
 	// evaluated by the retry engine (their queue has a policy attached) but
 	// were skipped because gang retry is not supported.
-	retryPolicyGangSkippedCounter = promauto.NewCounterVec(
+	retryPolicyGangSkippedCounter = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "armada_scheduler_retry_policy_gang_skipped_total",
-			Help: "Number of gang job failures skipped by the retry policy engine because gang retry is unsupported, for queues with a retry policy attached.",
+			Help: "Number of gang job failures skipped by the retry policy engine because gang retry is unsupported, for queues with a retry policy attached. The queue is recorded in the scheduler log.",
 		},
-		[]string{"queue"},
 	)
 	// retryPolicyDecisionsCounter counts every retry engine verdict, labeled
 	// by which gate produced it (see retry.Decision for the label values).
 	retryPolicyDecisionsCounter = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "armada_scheduler_retry_policy_decisions_total",
-			Help: "Retry policy engine decisions by queue, policy and decision outcome.",
+			Help: "Retry policy engine decisions by policy and decision outcome. The queue is recorded in the scheduler log.",
 		},
-		[]string{"queue", "policy", "decision"},
+		[]string{"policy", "decision"},
 	)
 )
 
@@ -1067,7 +1066,7 @@ func (s *Scheduler) evaluateRetryPolicy(
 	if job.IsInGang() {
 		if policyName != "" {
 			ctx.Infof("skipping retry policy %q for gang job %s in queue %s: gang retry is not supported", policyName, job.Id(), job.Queue())
-			retryPolicyGangSkippedCounter.WithLabelValues(job.Queue()).Inc()
+			retryPolicyGangSkippedCounter.Inc()
 		}
 		return false, "", false
 	}
@@ -1086,12 +1085,13 @@ func (s *Scheduler) evaluateRetryPolicy(
 		return false, "", false
 	}
 
+	failures, preemptions, totalRuns := job.RetryCounts()
 	result := s.retryEngine.Evaluate(policy, runError, retry.Counts{
-		Failures:    job.FailureCount(),
-		Preemptions: job.PreemptionCount(),
-		TotalRuns:   uint(len(job.AllRuns())),
+		Failures:    failures,
+		Preemptions: preemptions,
+		TotalRuns:   totalRuns,
 	})
-	retryPolicyDecisionsCounter.WithLabelValues(job.Queue(), policyName, string(result.Decision)).Inc()
+	retryPolicyDecisionsCounter.WithLabelValues(policyName, string(result.Decision)).Inc()
 	ctx.Infof("retry decision for job %s queue=%s policy=%s: ShouldRetry=%v Reason=%q",
 		job.Id(), job.Queue(), policyName, result.ShouldRetry, result.Reason)
 	return result.ShouldRetry, result.Reason, true

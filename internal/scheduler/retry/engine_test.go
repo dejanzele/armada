@@ -534,7 +534,7 @@ func TestEngine_Evaluate(t *testing.T) {
 			counts:   Counts{Failures: 3, Preemptions: 1, TotalRuns: 4},
 			expected: Result{ShouldRetry: false, Reason: "policy retry limit exceeded (2/2)"},
 		},
-		"global cap counts every run regardless of tally": {
+		"preemptions do not consume the global cap": {
 			globalMax: 3,
 			policy: &Policy{
 				Name:          "test",
@@ -542,9 +542,23 @@ func TestEngine_Evaluate(t *testing.T) {
 				DefaultAction: ActionRetry,
 			},
 			runError: makeAppError(1, "crash"),
-			// Failures and Preemptions are individually low, but TotalRuns
-			// includes legacy lease returns and trips the global cap.
-			counts:   Counts{Failures: 1, Preemptions: 1, TotalRuns: 4},
+			// A heavily-preempted job (4 preemptions) failing genuinely on
+			// only its 2nd real attempt must still retry: the scheduler's own
+			// preemptions must not exhaust the global budget. genuineRuns =
+			// TotalRuns - Preemptions = 6 - 4 = 2, so retriesUsed = 1 < 3.
+			counts:   Counts{Failures: 1, Preemptions: 4, TotalRuns: 6},
+			expected: Result{ShouldRetry: true, Reason: "no rule matched, using default action"},
+		},
+		"global cap still trips on genuine failures": {
+			globalMax: 3,
+			policy: &Policy{
+				Name:          "test",
+				RetryLimit:    0,
+				DefaultAction: ActionRetry,
+			},
+			runError: makeAppError(1, "crash"),
+			// Four non-preemption runs -> retriesUsed = 3 >= 3.
+			counts:   Counts{Failures: 3, Preemptions: 0, TotalRuns: 4},
 			expected: Result{ShouldRetry: false, Reason: "global max retries exceeded (3/3)"},
 		},
 	}

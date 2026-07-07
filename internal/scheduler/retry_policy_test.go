@@ -420,7 +420,7 @@ func TestRetryPolicy_FFOn_GangJobSkipped(t *testing.T) {
 // TestRetryPolicy_FFOn_GlobalCapCountsAllRuns pins the global-cap contract:
 // retriesUsed = TotalRuns-1 over ALL runs, so preempted runs consume global
 // budget even though they do not consume the per-policy failure budget.
-func TestRetryPolicy_FFOn_GlobalCapCountsAllRuns(t *testing.T) {
+func TestRetryPolicy_FFOn_GlobalCapExcludesPreemptions(t *testing.T) {
 	policy, err := retry.ConvertPolicy(&api.RetryPolicy{
 		Name:          "test-policy",
 		RetryLimit:    0, // no per-policy bound, global cap is the only gate
@@ -432,8 +432,10 @@ func TestRetryPolicy_FFOn_GlobalCapCountsAllRuns(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Global cap of 2: three preempted runs plus the failed run being
-	// evaluated give TotalRuns=4, i.e. 3 retries used, which exceeds the cap.
+	// Global cap of 2, three preempted runs plus one failed run. Preemptions
+	// are the scheduler's own action and must not consume the global budget:
+	// genuineRuns = 4 - 3 = 1, so the failed run is the job's first genuine
+	// attempt and must still retry.
 	sched := makeRetryTestSchedulerWithGlobalMax(t, true, fakePolicyCache{"test-policy": policy}, 2)
 
 	jobId := util.NewULID()
@@ -486,11 +488,8 @@ func TestRetryPolicy_FFOn_GlobalCapCountsAllRuns(t *testing.T) {
 	require.NotNil(t, events)
 
 	hasRequeue, _ := classifyEvents(events.Events)
-	assert.False(t, hasRequeue,
-		"global cap counts all runs including preempted ones; 4 runs with a cap of 2 must not retry")
-	assert.True(t, hasTerminalError(events.Events), "global cap must terminally fail the job")
-	assert.Contains(t, terminalErrorMessage(events.Events), "global max retries exceeded",
-		"terminal failure must surface the global-cap reason")
+	assert.True(t, hasRequeue,
+		"preemptions must not consume the global cap: 3 preemptions + 1 failure with a cap of 2 must still retry")
 }
 
 // TestRetryPolicy_FFOn_GlobalMaxZeroDisablesRetries pins the kill switch: a
@@ -872,7 +871,7 @@ func TestRetryPolicy_FFOn_GangSkipCounterOnlyWhenPolicyAttached(t *testing.T) {
 	require.NoError(t, err)
 
 	sched := makeRetryTestScheduler(t, true, fakePolicyCache{"test-policy": policy})
-	counter := retryPolicyGangSkippedCounter.WithLabelValues("testQueue")
+	counter := retryPolicyGangSkippedCounter
 
 	txn := sched.jobDb.WriteTxn()
 	defer txn.Abort()
