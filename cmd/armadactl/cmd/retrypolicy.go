@@ -11,27 +11,10 @@ func retryPolicyCreateCmd() *cobra.Command {
 }
 
 func retryPolicyCreateCmdWithApp(a *armadactl.App) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "retry-policy",
-		Short: "Create a retry policy from a YAML/JSON file",
-		Long:  "Create a retry policy that defines rules for whether failed jobs should be retried.",
-		Args:  cobra.NoArgs,
-		PreRunE: func(cmd *cobra.Command, args []string) error {
-			return initParams(cmd, a.Params)
-		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			filePath, err := cmd.Flags().GetString("file")
-			if err != nil {
-				return err
-			}
-			return a.CreateRetryPolicyFromFile(filePath)
-		},
-	}
-	cmd.Flags().StringP("file", "f", "", "Path to YAML/JSON file defining the retry policy.")
-	if err := cmd.MarkFlagRequired("file"); err != nil {
-		panic(err)
-	}
-	return cmd
+	return retryPolicyFileCmdWithApp(a,
+		"Create a retry policy from a YAML/JSON file",
+		"Create a retry policy that defines rules for whether failed jobs should be retried.",
+		(*armadactl.App).CreateRetryPolicyFromFile)
 }
 
 func retryPolicyUpdateCmd() *cobra.Command {
@@ -39,10 +22,19 @@ func retryPolicyUpdateCmd() *cobra.Command {
 }
 
 func retryPolicyUpdateCmdWithApp(a *armadactl.App) *cobra.Command {
+	return retryPolicyFileCmdWithApp(a,
+		"Update a retry policy from a YAML/JSON file",
+		"Update an existing retry policy with the definition from a YAML/JSON file.",
+		(*armadactl.App).UpdateRetryPolicyFromFile)
+}
+
+// retryPolicyFileCmdWithApp builds a command that reads a retry policy from a
+// YAML/JSON file and applies it via run.
+func retryPolicyFileCmdWithApp(a *armadactl.App, short, long string, run func(*armadactl.App, string) error) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "retry-policy",
-		Short: "Update a retry policy from a YAML/JSON file",
-		Long:  "Update an existing retry policy with the definition from a YAML/JSON file.",
+		Short: short,
+		Long:  long,
 		Args:  cobra.NoArgs,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			return initParams(cmd, a.Params)
@@ -52,7 +44,7 @@ func retryPolicyUpdateCmdWithApp(a *armadactl.App) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return a.UpdateRetryPolicyFromFile(filePath)
+			return run(a, filePath)
 		},
 	}
 	cmd.Flags().StringP("file", "f", "", "Path to YAML/JSON file defining the retry policy.")

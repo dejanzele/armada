@@ -844,13 +844,12 @@ func (job *Job) NumAttempts() uint {
 	return attempts
 }
 
-// FailureCount returns the number of runs of this job that have ended in a
-// failed terminal state, excluding preempted runs. Preemptions are excluded
-// because the retry engine charges them to a separate budget: a preemption is
-// the scheduler's own action, not a genuine job failure, so it must not eat
-// into the failure retry budget. We derive the count from run history rather
-// than maintain a separate counter so it survives scheduler restarts (the
-// same is not true of in-memory-only counters).
+// FailureCount returns the number of runs of this job that ended in a failed
+// terminal state, excluding preempted runs. The retry engine charges
+// preemptions to a separate budget: a preemption is the scheduler's own
+// action, not a genuine job failure, so it must not eat into the failure
+// retry budget. Deriving the count from run history rather than a separate
+// counter keeps it correct across scheduler restarts.
 func (job *Job) FailureCount() uint32 {
 	count := uint32(0)
 	for _, run := range job.runsById {

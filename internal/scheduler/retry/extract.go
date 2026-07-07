@@ -41,7 +41,8 @@ func extractCondition(err *armadaevents.Error) string {
 	}
 }
 
-// extractExitCode returns the exit code from the first ContainerError in a PodError.
+// extractExitCode returns the exit code of the first container that failed with
+// a non-zero code, or 0 if the error is not a PodError or no container failed.
 func extractExitCode(err *armadaevents.Error) int32 {
 	if pe := err.GetPodError(); pe != nil {
 		for _, ce := range pe.ContainerErrors {
@@ -53,7 +54,8 @@ func extractExitCode(err *armadaevents.Error) int32 {
 	return 0
 }
 
-// extractTerminationMessage returns the termination message from the first ContainerError in a PodError.
+// extractTerminationMessage returns the message of the first container that set
+// one, or "" if the error is not a PodError or no container reported a message.
 func extractTerminationMessage(err *armadaevents.Error) string {
 	if pe := err.GetPodError(); pe != nil {
 		for _, ce := range pe.ContainerErrors {

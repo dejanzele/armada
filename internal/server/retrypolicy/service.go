@@ -13,6 +13,7 @@ import (
 	"github.com/armadaproject/armada/internal/common/armadacontext"
 	"github.com/armadaproject/armada/internal/common/armadaerrors"
 	"github.com/armadaproject/armada/internal/common/auth"
+	"github.com/armadaproject/armada/internal/common/auth/permission"
 	"github.com/armadaproject/armada/internal/server/permissions"
 	"github.com/armadaproject/armada/pkg/api"
 	"github.com/armadaproject/armada/pkg/client/queue"
@@ -38,14 +39,25 @@ func NewServer(repository RetryPolicyRepository, queueLister QueueLister, author
 	}
 }
 
-func (s *Server) CreateRetryPolicy(grpcCtx context.Context, req *api.RetryPolicy) (*types.Empty, error) {
-	ctx := armadacontext.FromGrpcCtx(grpcCtx)
-	err := s.authorizer.AuthorizeAction(ctx, permissions.CreateRetryPolicy)
+// authorize checks the caller holds perm, returning a gRPC status error
+// (PermissionDenied for an unauthorized principal, Unavailable if the check
+// itself fails) or nil when allowed. verb and name only shape the denial message.
+func (s *Server) authorize(ctx *armadacontext.Context, perm permission.Permission, verb, name string) error {
+	err := s.authorizer.AuthorizeAction(ctx, perm)
 	var ep *armadaerrors.ErrUnauthorized
 	if errors.As(err, &ep) {
-		return nil, status.Errorf(codes.PermissionDenied, "error creating retry policy %s: %s", req.Name, ep)
-	} else if err != nil {
-		return nil, status.Errorf(codes.Unavailable, "error checking permissions: %s", err)
+		return status.Errorf(codes.PermissionDenied, "error %s retry policy %s: %s", verb, name, ep)
+	}
+	if err != nil {
+		return status.Errorf(codes.Unavailable, "error checking permissions: %s", err)
+	}
+	return nil
+}
+
+func (s *Server) CreateRetryPolicy(grpcCtx context.Context, req *api.RetryPolicy) (*types.Empty, error) {
+	ctx := armadacontext.FromGrpcCtx(grpcCtx)
+	if err := s.authorize(ctx, permissions.CreateRetryPolicy, "creating", req.Name); err != nil {
+		return nil, err
 	}
 
 	// Reject invalid policies up front. The scheduler validates policies when
@@ -55,7 +67,7 @@ func (s *Server) CreateRetryPolicy(grpcCtx context.Context, req *api.RetryPolicy
 		return nil, status.Errorf(codes.InvalidArgument, "invalid retry policy: %s", err)
 	}
 
-	err = s.repository.CreateRetryPolicy(ctx, req)
+	err := s.repository.CreateRetryPolicy(ctx, req)
 	var ea *ErrRetryPolicyAlreadyExists
 	if errors.As(err, &ea) {
 		return nil, status.Errorf(codes.AlreadyExists, "error creating retry policy: %s", err)
@@ -68,19 +80,15 @@ func (s *Server) CreateRetryPolicy(grpcCtx context.Context, req *api.RetryPolicy
 
 func (s *Server) UpdateRetryPolicy(grpcCtx context.Context, req *api.RetryPolicy) (*types.Empty, error) {
 	ctx := armadacontext.FromGrpcCtx(grpcCtx)
-	err := s.authorizer.AuthorizeAction(ctx, permissions.UpdateRetryPolicy)
-	var ep *armadaerrors.ErrUnauthorized
-	if errors.As(err, &ep) {
-		return nil, status.Errorf(codes.PermissionDenied, "error updating retry policy %s: %s", req.Name, ep)
-	} else if err != nil {
-		return nil, status.Errorf(codes.Unavailable, "error checking permissions: %s", err)
+	if err := s.authorize(ctx, permissions.UpdateRetryPolicy, "updating", req.Name); err != nil {
+		return nil, err
 	}
 
 	if err := ValidatePolicy(req); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid retry policy: %s", err)
 	}
 
-	err = s.repository.UpdateRetryPolicy(ctx, req)
+	err := s.repository.UpdateRetryPolicy(ctx, req)
 	var enf *ErrRetryPolicyNotFound
 	if errors.As(err, &enf) {
 		return nil, status.Errorf(codes.NotFound, "error: %s", err)
@@ -93,12 +101,8 @@ func (s *Server) UpdateRetryPolicy(grpcCtx context.Context, req *api.RetryPolicy
 
 func (s *Server) DeleteRetryPolicy(grpcCtx context.Context, req *api.RetryPolicyDeleteRequest) (*types.Empty, error) {
 	ctx := armadacontext.FromGrpcCtx(grpcCtx)
-	err := s.authorizer.AuthorizeAction(ctx, permissions.DeleteRetryPolicy)
-	var ep *armadaerrors.ErrUnauthorized
-	if errors.As(err, &ep) {
-		return nil, status.Errorf(codes.PermissionDenied, "error deleting retry policy %s: %s", req.Name, ep)
-	} else if err != nil {
-		return nil, status.Errorf(codes.Unavailable, "error checking permissions: %s", err)
+	if err := s.authorize(ctx, permissions.DeleteRetryPolicy, "deleting", req.Name); err != nil {
+		return nil, err
 	}
 
 	if req.Name == "" {

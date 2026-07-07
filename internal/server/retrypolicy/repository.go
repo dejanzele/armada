@@ -60,7 +60,7 @@ func (r *PostgresRetryPolicyRepository) GetAllRetryPolicies(ctx *armadacontext.C
 		}
 		policy, err := unmarshalRetryPolicy(definitionBytes)
 		if err != nil {
-			return nil, errors.WithStack(err)
+			return nil, err
 		}
 		policies = append(policies, policy)
 	}
@@ -85,7 +85,7 @@ func (r *PostgresRetryPolicyRepository) GetRetryPolicy(ctx *armadacontext.Contex
 
 	policy, err := unmarshalRetryPolicy(definitionBytes)
 	if err != nil {
-		return nil, errors.WithStack(err)
+		return nil, err
 	}
 	return policy, nil
 }
@@ -139,7 +139,7 @@ func (r *PostgresRetryPolicyRepository) DeleteRetryPolicy(ctx *armadacontext.Con
 func unmarshalRetryPolicy(definitionBytes []byte) (*api.RetryPolicy, error) {
 	policy := &api.RetryPolicy{}
 	if err := proto.Unmarshal(definitionBytes, policy); err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	return policy, nil
 }

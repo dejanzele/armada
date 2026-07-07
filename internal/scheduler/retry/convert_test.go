@@ -1,7 +1,6 @@
 package retry
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -131,7 +130,7 @@ func TestConvertPolicy_UnknownAction(t *testing.T) {
 	require.Error(t, err)
 	// We refuse RETRY_ACTION_UNSPECIFIED rather than treating it as a default,
 	// otherwise a truncated proto could silently retry every error.
-	assert.True(t, strings.Contains(err.Error(), "unknown action"), err.Error())
+	assert.Contains(t, err.Error(), "unknown action")
 }
 
 func TestConvertPolicy_NilProto(t *testing.T) {

@@ -50,7 +50,7 @@ type ExecutorApi struct {
 	nodeIdLabel      string
 	// See scheduling schedulingConfig.
 	priorityClassNameOverride *string
-	// Retry policy config; when Enabled is true, the executor api populates the
+	// Retry policy config. When Enabled is true, the executor api populates the
 	// optional JobRunIndex field on outgoing JobRunLease messages for retried
 	// attempts (run index > 0) so the executor can give them fresh pod names.
 	retryPolicy configuration.RetryPolicyConfig

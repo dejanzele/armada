@@ -774,11 +774,6 @@ func preemptingJobId(preemptingJob *jobdb.Job) string {
 	return preemptingJob.Id()
 }
 
-// createEventsForRetryingPreemption emits the three events that surface a
-// preemption-driven retry: JobRunPreempted (records the preemption in
-// Lookout and the api event stream), a non-terminal JobErrors (api stream
-// surfaces retryable=true), and JobRequeued (job is re-leased, not
-// terminally failed).
 // newPreemptedRunError wraps a preemption reason in the armadaevents.Error
 // shape the retry engine matches against (`onConditions: ["Preempted"]`).
 // Used by both preempt paths (user-preempt branch and algo-preempt
@@ -791,6 +786,12 @@ func newPreemptedRunError(reason string) *armadaevents.Error {
 	}
 }
 
+// createEventsForRetryingPreemption emits the events that surface a
+// preemption-driven retry: JobRunPreempted (records the preemption in Lookout
+// and the api event stream), a terminal JobRunErrors (terminates the run so
+// the executor stops the preempted pod), a non-terminal JobErrors (api stream
+// surfaces retryable=true), and JobRequeued (job is re-leased, not terminally
+// failed).
 func createEventsForRetryingPreemption(
 	jobId string,
 	runId string,
@@ -1059,10 +1060,10 @@ func (s *Scheduler) evaluateRetryPolicy(
 
 	// Gang retry is deliberately unsupported: retrying a single member would
 	// either deadlock the QueuedGangIterator waiting for full cardinality or
-	// silently shrink the gang, so a single decision per gang is required
-	// and that aggregation is deferred. Gang failures fall through to the
-	// legacy lease-return retry path.
-	// TODO(dejanzele): gang-aware retry tracked in #4683.
+	// silently shrink the gang, so a single decision per gang is required and
+	// that aggregation is deferred. Gang failures fall through to the legacy
+	// lease-return retry path.
+	// TODO(dejanzele): support gang-aware retry.
 	if job.IsInGang() {
 		if policyName != "" {
 			ctx.Infof("skipping retry policy %q for gang job %s in queue %s: gang retry is not supported", policyName, job.Id(), job.Queue())

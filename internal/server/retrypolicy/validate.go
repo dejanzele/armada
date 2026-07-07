@@ -40,9 +40,7 @@ func ValidatePolicy(p *api.RetryPolicy) error {
 		}
 	}
 	// The scheduler's policy loader rejects an unspecified default action, so
-	// reject it here too: accepting a policy at write time that the scheduler
-	// would silently drop is exactly the confusion write-time validation exists
-	// to prevent.
+	// reject it here too rather than accept a policy the scheduler will drop.
 	if p.DefaultAction == api.RetryAction_RETRY_ACTION_UNSPECIFIED {
 		return fmt.Errorf("retry policy %q must set a default action (Fail or Retry)", p.Name)
 	}
