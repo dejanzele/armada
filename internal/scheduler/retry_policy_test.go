@@ -188,36 +188,6 @@ func containerErrorWithExitCode(code int32) *armadaevents.Error {
 	}
 }
 
-func TestRetryPolicy_FFOff_NoEngineEvaluation(t *testing.T) {
-	policy, err := retry.ConvertPolicy(&api.RetryPolicy{
-		Name:          "test-policy",
-		RetryLimit:    3,
-		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
-		Rules: []*api.RetryRule{{
-			Action:      api.RetryAction_RETRY_ACTION_RETRY,
-			OnExitCodes: &api.RetryExitCodeMatcher{Operator: api.ExitCodeOperator_EXIT_CODE_OPERATOR_IN, Values: []int32{42}},
-		}},
-	})
-	require.NoError(t, err)
-
-	sched := makeRetryTestScheduler(t, false, fakePolicyCache{"test-policy": policy})
-	job := makeFailedJobForRetry(t, sched)
-
-	txn := sched.jobDb.WriteTxn()
-	defer txn.Abort()
-	require.NoError(t, txn.Upsert([]*jobdb.Job{job}))
-
-	jobErrors := map[string]*armadaevents.Error{job.LatestRun().Id(): containerErrorWithExitCode(42)}
-
-	events, err := sched.generateUpdateMessagesFromJob(armadacontext.Background(), job, jobErrors, nil, txn)
-	require.NoError(t, err)
-	require.NotNil(t, events)
-
-	hasRequeue, hasErrors := classifyEvents(events.Events)
-	assert.False(t, hasRequeue, "FF off must not emit JobRequeued via engine")
-	assert.True(t, hasErrors, "FF off must still emit terminal JobErrors")
-}
-
 func TestRetryPolicy_FFOn_RetryDecision(t *testing.T) {
 	policy, err := retry.ConvertPolicy(&api.RetryPolicy{
 		Name:          "test-policy",

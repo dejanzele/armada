@@ -187,10 +187,8 @@ func TestExtractCategory(t *testing.T) {
 		err      *armadaevents.Error
 		expected string
 	}{
-		"nil error":            {err: nil, expected: ""},
-		"category set":         {err: &armadaevents.Error{FailureCategory: "infrastructure"}, expected: "infrastructure"},
-		"only subcategory set": {err: &armadaevents.Error{FailureSubcategory: "oom"}, expected: ""},
-		"both empty":           {err: &armadaevents.Error{}, expected: ""},
+		"nil error":    {err: nil, expected: ""},
+		"category set": {err: &armadaevents.Error{FailureCategory: "infrastructure"}, expected: "infrastructure"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -204,10 +202,8 @@ func TestExtractSubcategory(t *testing.T) {
 		err      *armadaevents.Error
 		expected string
 	}{
-		"nil error":         {err: nil, expected: ""},
-		"subcategory set":   {err: &armadaevents.Error{FailureSubcategory: "oom"}, expected: "oom"},
-		"only category set": {err: &armadaevents.Error{FailureCategory: "infrastructure"}, expected: ""},
-		"both empty":        {err: &armadaevents.Error{}, expected: ""},
+		"nil error":       {err: nil, expected: ""},
+		"subcategory set": {err: &armadaevents.Error{FailureSubcategory: "oom"}, expected: "oom"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

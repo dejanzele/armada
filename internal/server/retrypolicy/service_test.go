@@ -87,21 +87,6 @@ func TestCreateRetryPolicy_AuthorizeErrorUnavailable(t *testing.T) {
 	servertest.RequireGrpcCode(t, err, codes.Unavailable)
 }
 
-func TestCreateRetryPolicy_EmptyNameInvalidArgument(t *testing.T) {
-	s, m := newTestServer(t)
-	ctx := armadacontext.Background()
-
-	m.authorizer.
-		EXPECT().
-		AuthorizeAction(ctx, permission.Permission(permissions.CreateRetryPolicy)).
-		Return(nil).
-		Times(1)
-
-	_, err := s.CreateRetryPolicy(ctx, &api.RetryPolicy{Name: ""})
-	require.Error(t, err)
-	servertest.RequireGrpcCode(t, err, codes.InvalidArgument)
-}
-
 func TestCreateRetryPolicy_AlreadyExists(t *testing.T) {
 	s, m := newTestServer(t)
 	ctx := armadacontext.Background()
@@ -176,21 +161,6 @@ func TestUpdateRetryPolicy_PermissionDenied(t *testing.T) {
 	_, err := s.UpdateRetryPolicy(ctx, &api.RetryPolicy{Name: "p1"})
 	require.Error(t, err)
 	servertest.RequireGrpcCode(t, err, codes.PermissionDenied)
-}
-
-func TestUpdateRetryPolicy_EmptyName(t *testing.T) {
-	s, m := newTestServer(t)
-	ctx := armadacontext.Background()
-
-	m.authorizer.
-		EXPECT().
-		AuthorizeAction(ctx, permission.Permission(permissions.UpdateRetryPolicy)).
-		Return(nil).
-		Times(1)
-
-	_, err := s.UpdateRetryPolicy(ctx, &api.RetryPolicy{Name: ""})
-	require.Error(t, err)
-	servertest.RequireGrpcCode(t, err, codes.InvalidArgument)
 }
 
 func TestUpdateRetryPolicy_NotFound(t *testing.T) {

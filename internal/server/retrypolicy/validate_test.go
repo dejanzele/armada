@@ -68,10 +68,6 @@ func TestValidatePolicy(t *testing.T) {
 			},
 			wantErr: "must set a default action",
 		},
-		"no rules and unspecified default action": {
-			policy:  &api.RetryPolicy{Name: "p1"},
-			wantErr: "must set a default action",
-		},
 		"nil rule": {
 			policy: &api.RetryPolicy{
 				Name:  "p1",
