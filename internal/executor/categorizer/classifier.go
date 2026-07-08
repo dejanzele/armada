@@ -18,8 +18,9 @@ import (
 const maxCategoryNameLen = 63
 
 type category struct {
-	name  string
-	rules []rule
+	name   string
+	action PodFailureAction
+	rules  []rule
 }
 
 type rule struct {
@@ -39,6 +40,10 @@ type ClassifyResult struct {
 	// Hint is operator-supplied user-facing copy attached to the matching rule.
 	// Use AppendHint to attach it to the failure message before emitting events.
 	Hint string
+	// Action is the matched category's pod disposition (Delete or Retain). It
+	// tells the executor whether to delete the failed pod; it is not a retry
+	// decision (that stays with the scheduler's retry policy).
+	Action PodFailureAction
 }
 
 // AppendHint returns the message with this result's hint appended after a blank
@@ -85,7 +90,10 @@ func NewClassifier(config ErrorCategoriesConfig) (*Classifier, error) {
 		if len(cfg.Rules) == 0 {
 			return nil, fmt.Errorf("category %q must have at least one rule", cfg.Name)
 		}
-		cat := category{name: cfg.Name}
+		if err := validateAction(cfg.Action); err != nil {
+			return nil, fmt.Errorf("category %q: %w", cfg.Name, err)
+		}
+		cat := category{name: cfg.Name, action: cfg.Action}
 		for i, r := range cfg.Rules {
 			built, err := buildRule(r)
 			if err != nil {
@@ -100,6 +108,17 @@ func NewClassifier(config ErrorCategoriesConfig) (*Classifier, error) {
 		defaultSubcategory: config.DefaultSubcategory,
 		categories:         categories,
 	}, nil
+}
+
+// validateAction rejects an unknown category action. An empty value is allowed
+// and means Retain (keep the failed pod).
+func validateAction(a PodFailureAction) error {
+	switch a {
+	case "", PodFailureActionRetain, PodFailureActionDelete:
+		return nil
+	default:
+		return fmt.Errorf("invalid action %q: must be %q or %q", a, PodFailureActionDelete, PodFailureActionRetain)
+	}
 }
 
 func buildRule(cfg CategoryRule) (rule, error) {
@@ -209,7 +228,7 @@ func (c *Classifier) classify(pod *v1.Pod, podErrorMessage string) ClassifyResul
 			matched := ruleMatches(r, containers, podReason, podErrorMessage)
 			metrics.RecordRuleEvaluationDuration(cat.name, r.subcategory, time.Since(start))
 			if matched {
-				return ClassifyResult{Category: cat.name, Subcategory: r.subcategory, Hint: r.hint}
+				return ClassifyResult{Category: cat.name, Subcategory: r.subcategory, Hint: r.hint, Action: cat.action}
 			}
 		}
 	}

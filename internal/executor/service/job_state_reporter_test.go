@@ -200,12 +200,17 @@ func makeFailedPodWithExitCode(t *testing.T, exitCode int32) *v1.Pod {
 	return pod
 }
 
-func classifierForExitCode(t *testing.T, category, subcategory string, exitCode int32) *categorizer.Classifier {
+func classifierForExitCode(t *testing.T, category, subcategory string, exitCode int32, deleteOnFailure bool) *categorizer.Classifier {
 	t.Helper()
+	action := categorizer.PodFailureActionRetain
+	if deleteOnFailure {
+		action = categorizer.PodFailureActionDelete
+	}
 	c, err := categorizer.NewClassifier(categorizer.ErrorCategoriesConfig{
 		Categories: []categorizer.CategoryConfig{
 			{
-				Name: category,
+				Name:   category,
+				Action: action,
 				Rules: []categorizer.CategoryRule{
 					{
 						OnExitCodes: &errormatch.ExitCodeMatcher{
@@ -227,7 +232,7 @@ func classifierForExitCode(t *testing.T, category, subcategory string, exitCode 
 // advanced: a JobFailedEvent must be emitted (not a ReturnLease or a no-op).
 
 func TestJobStateReporter_PodFailed_EmitsJobFailedEventWhenClassifierMatches(t *testing.T) {
-	classifier := classifierForExitCode(t, "jsr-emit-cat", "jsr-emit-sub", 42)
+	classifier := classifierForExitCode(t, "jsr-emit-cat", "jsr-emit-sub", 42, false)
 	_, _, eventReporter, fakeClusterContext := setUpJobStateReporterTestWithClassifier(t, classifier, &stubIssueHandler{})
 
 	pod := makeFailedPodWithExitCode(t, 42)
@@ -238,8 +243,34 @@ func TestJobStateReporter_PodFailed_EmitsJobFailedEventWhenClassifierMatches(t *
 	assert.Len(t, eventReporter.ReceivedEvents, 1)
 }
 
+func TestJobStateReporter_PodFailed_DeletesPodWhenActionDelete(t *testing.T) {
+	classifier := classifierForExitCode(t, "jsr-del-cat", "jsr-del-sub", 42, true)
+	_, _, _, fakeClusterContext := setUpJobStateReporterTestWithClassifier(t, classifier, &stubIssueHandler{})
+
+	pod := makeFailedPodWithExitCode(t, 42)
+	addPod(t, fakeClusterContext, pod)
+	fakeClusterContext.SimulatePodAddEvent(pod)
+	time.Sleep(time.Millisecond * 100)
+
+	assert.NotContains(t, fakeClusterContext.Pods, pod.Labels[domain.JobId],
+		"a Delete-action failed pod is deleted so the legacy name is free for the retry")
+}
+
+func TestJobStateReporter_PodFailed_KeepsPodWhenActionRetain(t *testing.T) {
+	classifier := classifierForExitCode(t, "jsr-keep-cat", "jsr-keep-sub", 42, false)
+	_, _, _, fakeClusterContext := setUpJobStateReporterTestWithClassifier(t, classifier, &stubIssueHandler{})
+
+	pod := makeFailedPodWithExitCode(t, 42)
+	addPod(t, fakeClusterContext, pod)
+	fakeClusterContext.SimulatePodAddEvent(pod)
+	time.Sleep(time.Millisecond * 100)
+
+	assert.Contains(t, fakeClusterContext.Pods, pod.Labels[domain.JobId],
+		"a Retain-action failed pod is left in place for debugging")
+}
+
 func TestJobStateReporter_PodFailed_SuppressesEmissionWhenRetryableIssueRegistered(t *testing.T) {
-	classifier := classifierForExitCode(t, "jsr-retryable-cat", "jsr-retryable-sub", 42)
+	classifier := classifierForExitCode(t, "jsr-retryable-cat", "jsr-retryable-sub", 42, false)
 	_, _, eventReporter, fakeClusterContext := setUpJobStateReporterTestWithClassifier(
 		t, classifier,
 		&stubIssueHandler{detectAndRegisterFailedPodIssueResult: true},
@@ -254,7 +285,7 @@ func TestJobStateReporter_PodFailed_SuppressesEmissionWhenRetryableIssueRegister
 }
 
 func TestJobStateReporter_PodFailed_SuppressesEmissionWhenIssueAlreadyExists(t *testing.T) {
-	classifier := classifierForExitCode(t, "jsr-existing-cat", "jsr-existing-sub", 42)
+	classifier := classifierForExitCode(t, "jsr-existing-cat", "jsr-existing-sub", 42, false)
 	pod := makeFailedPodWithExitCode(t, 42)
 	_, _, eventReporter, fakeClusterContext := setUpJobStateReporterTestWithClassifier(
 		t, classifier,
@@ -269,7 +300,7 @@ func TestJobStateReporter_PodFailed_SuppressesEmissionWhenIssueAlreadyExists(t *
 }
 
 func TestJobStateReporter_PodFailed_DropsEventWhenReporterErrors(t *testing.T) {
-	classifier := classifierForExitCode(t, "jsr-report-error-cat", "jsr-report-error-sub", 42)
+	classifier := classifierForExitCode(t, "jsr-report-error-cat", "jsr-report-error-sub", 42, false)
 	_, _, eventReporter, fakeClusterContext := setUpJobStateReporterTestWithClassifier(t, classifier, &stubIssueHandler{})
 	eventReporter.ErrorOnReport = true
 

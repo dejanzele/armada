@@ -188,14 +188,47 @@ func containerErrorWithExitCode(code int32) *armadaevents.Error {
 	}
 }
 
+// categorizedError returns a container run error tagged with the given failure
+// category, so tests can drive the category-only retry engine.
+func categorizedError(category string) *armadaevents.Error {
+	err := containerErrorWithExitCode(42)
+	err.FailureCategory = category
+	return err
+}
+
+// TestRetryPolicy_DefaultPolicyNameFallback pins that a job whose queue has no
+// attached policy is evaluated against the configured default policy. This is
+// the fleet-wide enablement path: one named default policy applies everywhere
+// per-queue attachment is absent.
+func TestRetryPolicy_DefaultPolicyNameFallback(t *testing.T) {
+	policy, err := retry.ConvertPolicy(&api.RetryPolicy{
+		Name:          "default-policy",
+		RetryLimit:    3,
+		DefaultAction: api.RetryAction_RETRY_ACTION_RETRY,
+	})
+	require.NoError(t, err)
+
+	sched := makeRetryTestScheduler(t, true, fakePolicyCache{"default-policy": policy})
+	sched.retryPolicyConfig.DefaultPolicyName = "default-policy"
+
+	job := makeFailedJobForRetry(t, sched)
+
+	// An empty queue map means the queue has no attached policy, so resolution
+	// must fall back to the default.
+	shouldRetry, _, decided := sched.evaluateRetryPolicy(
+		armadacontext.Background(), job, categorizedError("app-error"), map[string]string{})
+	assert.True(t, decided, "default policy must produce a decision for an unattached queue")
+	assert.True(t, shouldRetry, "default policy's Retry default action must apply")
+}
+
 func TestRetryPolicy_FFOn_RetryDecision(t *testing.T) {
 	policy, err := retry.ConvertPolicy(&api.RetryPolicy{
 		Name:          "test-policy",
 		RetryLimit:    3,
 		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
 		Rules: []*api.RetryRule{{
-			Action:      api.RetryAction_RETRY_ACTION_RETRY,
-			OnExitCodes: &api.RetryExitCodeMatcher{Operator: api.ExitCodeOperator_EXIT_CODE_OPERATOR_IN, Values: []int32{42}},
+			Action:     api.RetryAction_RETRY_ACTION_RETRY,
+			OnCategory: "app-error",
 		}},
 	})
 	require.NoError(t, err)
@@ -207,7 +240,7 @@ func TestRetryPolicy_FFOn_RetryDecision(t *testing.T) {
 	defer txn.Abort()
 	require.NoError(t, txn.Upsert([]*jobdb.Job{job}))
 
-	jobErrors := map[string]*armadaevents.Error{job.LatestRun().Id(): containerErrorWithExitCode(42)}
+	jobErrors := map[string]*armadaevents.Error{job.LatestRun().Id(): categorizedError("app-error")}
 	queueRetryPolicies := map[string]string{"testQueue": "test-policy"}
 
 	events, err := sched.generateUpdateMessagesFromJob(armadacontext.Background(), job, jobErrors, queueRetryPolicies, txn)
@@ -235,8 +268,8 @@ func TestRetryPolicy_FFOn_PolicyLimitCapsRetries(t *testing.T) {
 		RetryLimit:    2,
 		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
 		Rules: []*api.RetryRule{{
-			Action:      api.RetryAction_RETRY_ACTION_RETRY,
-			OnExitCodes: &api.RetryExitCodeMatcher{Operator: api.ExitCodeOperator_EXIT_CODE_OPERATOR_IN, Values: []int32{42}},
+			Action:     api.RetryAction_RETRY_ACTION_RETRY,
+			OnCategory: "app-error",
 		}},
 	})
 	require.NoError(t, err)
@@ -258,7 +291,7 @@ func TestRetryPolicy_FFOn_PolicyLimitCapsRetries(t *testing.T) {
 	defer txn.Abort()
 	require.NoError(t, txn.Upsert([]*jobdb.Job{job}))
 
-	jobErrors := map[string]*armadaevents.Error{job.LatestRun().Id(): containerErrorWithExitCode(42)}
+	jobErrors := map[string]*armadaevents.Error{job.LatestRun().Id(): categorizedError("app-error")}
 	queueRetryPolicies := map[string]string{"testQueue": "test-policy"}
 
 	events, err := sched.generateUpdateMessagesFromJob(armadacontext.Background(), job, jobErrors, queueRetryPolicies, txn)
@@ -280,8 +313,8 @@ func TestRetryPolicy_FFOn_TerminalFailPreservesFailureCategory(t *testing.T) {
 		RetryLimit:    0, // unlimited at policy level
 		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
 		Rules: []*api.RetryRule{{
-			Action:      api.RetryAction_RETRY_ACTION_FAIL,
-			OnExitCodes: &api.RetryExitCodeMatcher{Operator: api.ExitCodeOperator_EXIT_CODE_OPERATOR_IN, Values: []int32{42}},
+			Action:     api.RetryAction_RETRY_ACTION_FAIL,
+			OnCategory: "ApplicationError",
 		}},
 	})
 	require.NoError(t, err)
@@ -328,15 +361,16 @@ func TestRetryPolicy_FFOn_MissingPolicyFallsThrough(t *testing.T) {
 	defer txn.Abort()
 	require.NoError(t, txn.Upsert([]*jobdb.Job{job}))
 
-	jobErrors := map[string]*armadaevents.Error{job.LatestRun().Id(): containerErrorWithExitCode(42)}
+	jobErrors := map[string]*armadaevents.Error{job.LatestRun().Id(): categorizedError("app-error")}
 	queueRetryPolicies := map[string]string{"testQueue": "test-policy"}
 
 	events, err := sched.generateUpdateMessagesFromJob(armadacontext.Background(), job, jobErrors, queueRetryPolicies, txn)
 	require.NoError(t, err)
 	require.NotNil(t, events)
 
-	_, hasErrors := classifyEvents(events.Events)
+	hasRequeue, hasErrors := classifyEvents(events.Events)
 	assert.True(t, hasErrors, "missing policy must not crash; falls back to legacy terminal-failure path")
+	assert.False(t, hasRequeue, "missing policy must not requeue; the legacy path terminally fails the job")
 }
 
 func classifyEvents(events []*armadaevents.EventSequence_Event) (hasRequeue bool, hasErrors bool) {
@@ -391,8 +425,8 @@ func TestRetryPolicy_FFOn_GangJobSkipped(t *testing.T) {
 		RetryLimit:    3,
 		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
 		Rules: []*api.RetryRule{{
-			Action:      api.RetryAction_RETRY_ACTION_RETRY,
-			OnExitCodes: &api.RetryExitCodeMatcher{Operator: api.ExitCodeOperator_EXIT_CODE_OPERATOR_IN, Values: []int32{42}},
+			Action:     api.RetryAction_RETRY_ACTION_RETRY,
+			OnCategory: "app-error",
 		}},
 	})
 	require.NoError(t, err)
@@ -405,7 +439,7 @@ func TestRetryPolicy_FFOn_GangJobSkipped(t *testing.T) {
 	defer txn.Abort()
 	require.NoError(t, txn.Upsert([]*jobdb.Job{job}))
 
-	jobErrors := map[string]*armadaevents.Error{job.LatestRun().Id(): containerErrorWithExitCode(42)}
+	jobErrors := map[string]*armadaevents.Error{job.LatestRun().Id(): categorizedError("app-error")}
 	queueRetryPolicies := map[string]string{"testQueue": "test-policy"}
 
 	events, err := sched.generateUpdateMessagesFromJob(armadacontext.Background(), job, jobErrors, queueRetryPolicies, txn)
@@ -426,8 +460,8 @@ func TestRetryPolicy_FFOn_GlobalCapExcludesPreemptions(t *testing.T) {
 		RetryLimit:    0, // no per-policy bound, global cap is the only gate
 		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
 		Rules: []*api.RetryRule{{
-			Action:      api.RetryAction_RETRY_ACTION_RETRY,
-			OnExitCodes: &api.RetryExitCodeMatcher{Operator: api.ExitCodeOperator_EXIT_CODE_OPERATOR_IN, Values: []int32{42}},
+			Action:     api.RetryAction_RETRY_ACTION_RETRY,
+			OnCategory: "app-error",
 		}},
 	})
 	require.NoError(t, err)
@@ -480,7 +514,7 @@ func TestRetryPolicy_FFOn_GlobalCapExcludesPreemptions(t *testing.T) {
 	defer txn.Abort()
 	require.NoError(t, txn.Upsert([]*jobdb.Job{job}))
 
-	jobErrors := map[string]*armadaevents.Error{job.LatestRun().Id(): containerErrorWithExitCode(42)}
+	jobErrors := map[string]*armadaevents.Error{job.LatestRun().Id(): categorizedError("app-error")}
 	queueRetryPolicies := map[string]string{"testQueue": "test-policy"}
 
 	events, err := sched.generateUpdateMessagesFromJob(armadacontext.Background(), job, jobErrors, queueRetryPolicies, txn)
@@ -501,8 +535,8 @@ func TestRetryPolicy_FFOn_GlobalMaxZeroDisablesRetries(t *testing.T) {
 		RetryLimit:    3,
 		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
 		Rules: []*api.RetryRule{{
-			Action:      api.RetryAction_RETRY_ACTION_RETRY,
-			OnExitCodes: &api.RetryExitCodeMatcher{Operator: api.ExitCodeOperator_EXIT_CODE_OPERATOR_IN, Values: []int32{42}},
+			Action:     api.RetryAction_RETRY_ACTION_RETRY,
+			OnCategory: "app-error",
 		}},
 	})
 	require.NoError(t, err)
@@ -514,7 +548,7 @@ func TestRetryPolicy_FFOn_GlobalMaxZeroDisablesRetries(t *testing.T) {
 	defer txn.Abort()
 	require.NoError(t, txn.Upsert([]*jobdb.Job{job}))
 
-	jobErrors := map[string]*armadaevents.Error{job.LatestRun().Id(): containerErrorWithExitCode(42)}
+	jobErrors := map[string]*armadaevents.Error{job.LatestRun().Id(): categorizedError("app-error")}
 	queueRetryPolicies := map[string]string{"testQueue": "test-policy"}
 
 	events, err := sched.generateUpdateMessagesFromJob(armadacontext.Background(), job, jobErrors, queueRetryPolicies, txn)
@@ -527,333 +561,6 @@ func TestRetryPolicy_FFOn_GlobalMaxZeroDisablesRetries(t *testing.T) {
 		"terminal failure must surface the kill-switch reason")
 }
 
-func TestRetryPolicy_FFOn_UserPreemptRequeuesWhenEngineMatches(t *testing.T) {
-	policy, err := retry.ConvertPolicy(&api.RetryPolicy{
-		Name:          "preempt-policy",
-		RetryLimit:    3,
-		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
-		Rules: []*api.RetryRule{{
-			Action:       api.RetryAction_RETRY_ACTION_RETRY,
-			OnConditions: []string{"Preempted"},
-		}},
-	})
-	require.NoError(t, err)
-
-	sched := makeRetryTestScheduler(t, true, fakePolicyCache{"preempt-policy": policy})
-	job := makePreemptRequestedJobForRetry(t, sched)
-
-	txn := sched.jobDb.WriteTxn()
-	defer txn.Abort()
-	require.NoError(t, txn.Upsert([]*jobdb.Job{job}))
-
-	queueRetryPolicies := map[string]string{"testQueue": "preempt-policy"}
-
-	events, err := sched.generateUpdateMessagesFromJob(armadacontext.Background(), job, nil, queueRetryPolicies, txn)
-	require.NoError(t, err)
-	require.NotNil(t, events)
-
-	hasRequeue, hasErrors := classifyEvents(events.Events)
-	assert.True(t, hasRequeue, "engine must emit JobRequeued for matched preemption")
-	assert.True(t, hasErrors, "engine must emit a non-terminal JobErrors so the api stream sees retryable=true")
-	assert.False(t, hasTerminalError(events.Events), "engine retry path must not emit a terminal JobErrors on preemption")
-
-	updated := txn.GetById(job.Id())
-	require.NotNil(t, updated)
-	assert.True(t, updated.Queued(), "job must be queued for retry after engine match")
-	assert.False(t, updated.Failed(), "job must not be marked failed when engine retries")
-	assert.True(t, updated.LatestRun().Failed(),
-		"run must be marked failed so the `!Failed()` guard on the user-preempt branch stops it firing every cycle; Failed survives jobdb reconciliation while Preempted does not")
-}
-
-func TestRetryPolicy_FFOn_UserPreemptTerminalWhenNoMatch(t *testing.T) {
-	policy, err := retry.ConvertPolicy(&api.RetryPolicy{
-		Name:          "no-preempt-policy",
-		RetryLimit:    3,
-		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
-		Rules: []*api.RetryRule{{
-			Action:      api.RetryAction_RETRY_ACTION_RETRY,
-			OnExitCodes: &api.RetryExitCodeMatcher{Operator: api.ExitCodeOperator_EXIT_CODE_OPERATOR_IN, Values: []int32{42}},
-		}},
-	})
-	require.NoError(t, err)
-
-	sched := makeRetryTestScheduler(t, true, fakePolicyCache{"no-preempt-policy": policy})
-	job := makePreemptRequestedJobForRetry(t, sched)
-
-	txn := sched.jobDb.WriteTxn()
-	defer txn.Abort()
-	require.NoError(t, txn.Upsert([]*jobdb.Job{job}))
-
-	queueRetryPolicies := map[string]string{"testQueue": "no-preempt-policy"}
-
-	events, err := sched.generateUpdateMessagesFromJob(armadacontext.Background(), job, nil, queueRetryPolicies, txn)
-	require.NoError(t, err)
-	require.NotNil(t, events)
-
-	hasRequeue, hasErrors := classifyEvents(events.Events)
-	assert.False(t, hasRequeue, "no matching rule must not emit JobRequeued")
-	assert.True(t, hasErrors, "no matching rule must emit terminal JobErrors")
-	assert.True(t, hasTerminalError(events.Events), "non-match preemption must terminally fail the job")
-
-	updated := txn.GetById(job.Id())
-	require.NotNil(t, updated)
-	assert.True(t, updated.Failed(), "job must be terminally failed when engine does not match")
-}
-
-// TestRetryPolicy_FFOn_UserPreemptCountsCurrentRunAgainstLimit pins that the
-// retry limit applies to the preemption being evaluated as well as to prior
-// runs. The branch fires while lastRun is not yet terminal, so we must mark
-// the run preempted before consulting the engine. Without that,
-// PreemptionCount() returns N-1 instead of N and retryLimit is off-by-one.
-func TestRetryPolicy_FFOn_UserPreemptCountsCurrentRunAgainstLimit(t *testing.T) {
-	policy, err := retry.ConvertPolicy(&api.RetryPolicy{
-		Name:          "preempt-policy",
-		RetryLimit:    1, // 1 retry allowed, the second preemption must be terminal
-		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
-		Rules: []*api.RetryRule{{
-			Action:       api.RetryAction_RETRY_ACTION_RETRY,
-			OnConditions: []string{"Preempted"},
-		}},
-	})
-	require.NoError(t, err)
-
-	sched := makeRetryTestScheduler(t, true, fakePolicyCache{"preempt-policy": policy})
-
-	// Job has already exhausted its 1 preemption retry: one prior preempted
-	// run plus a fresh PreemptRequested run that has not yet been marked
-	// preempted.
-	jobId := util.NewULID()
-	job := testfixtures.NewJob(
-		jobId, "testJobset", "testQueue", uint32(10),
-		toInternalSchedulingInfo(preemptibleSchedulingInfo),
-		false, 1, false, false, false, 1, true,
-	)
-	priorRun := sched.jobDb.CreateRun(
-		uuid.NewString(), 0, jobId, 1,
-		"testExecutor", "testNodeId", "testNode", "testPool", nil,
-		false, false, false, false, nil,
-		true, false, false, false, // preempted=true
-		nil, nil, nil, nil, nil,
-		false, false,
-	)
-	currentRun := sched.jobDb.CreateRun(
-		uuid.NewString(), 1, jobId, 1,
-		"testExecutor", "testNodeId", "testNode", "testPool", nil,
-		true, false, true, true, nil, // running + preemptRequested
-		false, false, false, false, // not yet terminal (matches the branch guard)
-		nil, nil, nil, nil, nil,
-		false, false,
-	)
-	job = job.WithUpdatedRun(priorRun).WithUpdatedRun(currentRun)
-	require.Equal(t, uint32(1), job.PreemptionCount(),
-		"only the prior run is preempted at branch entry; PreemptionCount excludes the current run")
-
-	txn := sched.jobDb.WriteTxn()
-	defer txn.Abort()
-	require.NoError(t, txn.Upsert([]*jobdb.Job{job}))
-
-	queueRetryPolicies := map[string]string{"testQueue": "preempt-policy"}
-
-	events, err := sched.generateUpdateMessagesFromJob(armadacontext.Background(), job, nil, queueRetryPolicies, txn)
-	require.NoError(t, err)
-	require.NotNil(t, events)
-
-	hasRequeue, _ := classifyEvents(events.Events)
-	assert.False(t, hasRequeue,
-		"retryLimit=1 plus one prior preempted run plus the current preemption must terminate; "+
-			"without the WithPreempted(true) pre-evaluation step the engine sees PreemptionCount=1 instead of 2 and lets a second retry through")
-	assert.True(t, hasTerminalError(events.Events), "engine cap must emit a terminal JobErrors")
-}
-
-// TestRetryPolicy_FFOn_PreemptionUsesPreemptionsTally pins that failures and
-// preemptions consume separate per-policy budgets: a job whose failure budget
-// is exhausted must still be retried when it is preempted.
-func TestRetryPolicy_FFOn_PreemptionUsesPreemptionsTally(t *testing.T) {
-	policy, err := retry.ConvertPolicy(&api.RetryPolicy{
-		Name:          "preempt-policy",
-		RetryLimit:    1,
-		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
-		Rules: []*api.RetryRule{{
-			Action:       api.RetryAction_RETRY_ACTION_RETRY,
-			OnConditions: []string{"Preempted"},
-		}},
-	})
-	require.NoError(t, err)
-
-	sched := makeRetryTestScheduler(t, true, fakePolicyCache{"preempt-policy": policy})
-
-	// Two prior failed runs exhaust the failure budget (retryLimit=1), but no
-	// prior run was preempted, so the first preemption has a full budget.
-	jobId := util.NewULID()
-	job := testfixtures.NewJob(
-		jobId, "testJobset", "testQueue", uint32(10),
-		toInternalSchedulingInfo(preemptibleSchedulingInfo),
-		false, 1, false, false, false, 1, true,
-	)
-	for i := uint32(0); i < 2; i++ {
-		failedRun := sched.jobDb.CreateRun(
-			uuid.NewString(), i, jobId, 1,
-			"testExecutor", "testNodeId", "testNode", "testPool", nil,
-			false, false, false, false, nil,
-			false, false, true, false, // failed=true
-			nil, nil, nil, nil, nil,
-			false, false,
-		)
-		job = job.WithUpdatedRun(failedRun)
-	}
-	currentRun := sched.jobDb.CreateRun(
-		uuid.NewString(), 2, jobId, 1,
-		"testExecutor", "testNodeId", "testNode", "testPool", nil,
-		true, false, true, true, nil, // running + preemptRequested
-		false, false, false, false,
-		nil, nil, nil, nil, nil,
-		false, false,
-	)
-	job = job.WithUpdatedRun(currentRun)
-	require.Equal(t, uint32(2), job.FailureCount(), "fixture must have an exhausted failure budget")
-	require.Equal(t, uint32(0), job.PreemptionCount(), "fixture must have no prior preemptions")
-
-	txn := sched.jobDb.WriteTxn()
-	defer txn.Abort()
-	require.NoError(t, txn.Upsert([]*jobdb.Job{job}))
-
-	queueRetryPolicies := map[string]string{"testQueue": "preempt-policy"}
-
-	events, err := sched.generateUpdateMessagesFromJob(armadacontext.Background(), job, nil, queueRetryPolicies, txn)
-	require.NoError(t, err)
-	require.NotNil(t, events)
-
-	hasRequeue, _ := classifyEvents(events.Events)
-	assert.True(t, hasRequeue,
-		"preemptions must be counted against the preemption tally, not the exhausted failure tally")
-	assert.False(t, hasTerminalError(events.Events), "engine retry path must not emit a terminal JobErrors")
-
-	updated := txn.GetById(jobId)
-	require.NotNil(t, updated)
-	assert.True(t, updated.Queued(), "job must be requeued on preemption despite exhausted failure budget")
-}
-
-func TestRetryPolicy_FFOn_AlgoPreemptRequeuesWhenEngineMatches(t *testing.T) {
-	policy, err := retry.ConvertPolicy(&api.RetryPolicy{
-		Name:          "preempt-policy",
-		RetryLimit:    3,
-		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
-		Rules: []*api.RetryRule{{
-			Action:       api.RetryAction_RETRY_ACTION_RETRY,
-			OnConditions: []string{"Preempted"},
-		}},
-	})
-	require.NoError(t, err)
-
-	sched := makeRetryTestScheduler(t, true, fakePolicyCache{"preempt-policy": policy})
-
-	// Build a job in the algo-preempted state: queued=false, failed=true (job),
-	// run.failed=true (algo set both in-cycle at scheduling_algo.go:802/806).
-	jobId := util.NewULID()
-	job := testfixtures.NewJob(
-		jobId, "testJobset", "testQueue", uint32(10),
-		toInternalSchedulingInfo(preemptibleSchedulingInfo),
-		false, // queued
-		1,     // queuedVersion
-		false, false, false,
-		1, true,
-	)
-	run := sched.jobDb.CreateRun(
-		uuid.NewString(), 0, jobId, 1,
-		"testExecutor", "testNodeId", "testNode", "testPool", nil,
-		true,  // leased
-		false, // pending
-		true,  // running
-		false, // preemptRequested
-		nil,
-		false, // preempted (algo doesn't set this in-memory)
-		false, // succeeded
-		true,  // failed (algo set)
-		false, // cancelled
-		nil, nil, nil, nil, nil,
-		false, false,
-	)
-	job = job.WithUpdatedRun(run).WithFailed(true)
-
-	txn := sched.jobDb.WriteTxn()
-	defer txn.Abort()
-	require.NoError(t, txn.Upsert([]*jobdb.Job{job}))
-
-	jctx := schedulercontext.JobSchedulingContextsFromJobs([]*jobdb.Job{job})[0]
-	jctx.PreemptionDescription = "preempted by higher priority gang"
-	result := &scheduling.SchedulerResult{
-		PoolResults: []*scheduling.PoolSchedulingResult{
-			{SchedulingResult: &scheduling.SchedulingResult{PreemptedJobs: []*schedulercontext.JobSchedulingContext{jctx}}},
-		},
-	}
-	queueRetryPolicies := map[string]string{"testQueue": "preempt-policy"}
-
-	retried, err := sched.applyRetryPolicyToAlgoPreemptions(armadacontext.Background(), txn, result, queueRetryPolicies)
-	require.NoError(t, err)
-	require.True(t, retried[jobId], "engine match must mark job for retry override")
-
-	updated := txn.GetById(jobId)
-	require.NotNil(t, updated)
-	assert.True(t, updated.Queued(), "job must be re-queued after engine override")
-	assert.False(t, updated.Failed(), "job must clear failed=true after engine override")
-	assert.Equal(t, int32(2), updated.QueuedVersion(), "QueuedVersion must increment so JobRequeued carries the right version")
-	assert.True(t, updated.LatestRun().Failed(),
-		"run must keep failed=true; Failed survives jobdb reconciliation and acts as the dedupe signal")
-	assert.Equal(t, jobId, jctx.Job.Id(), "jctx.Job must point at the updated job so the events helper reads the new QueuedVersion")
-}
-
-func TestRetryPolicy_FFOn_AlgoPreemptTerminalWhenNoMatch(t *testing.T) {
-	policy, err := retry.ConvertPolicy(&api.RetryPolicy{
-		Name:          "no-preempt-policy",
-		RetryLimit:    3,
-		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
-		Rules: []*api.RetryRule{{
-			Action:      api.RetryAction_RETRY_ACTION_RETRY,
-			OnExitCodes: &api.RetryExitCodeMatcher{Operator: api.ExitCodeOperator_EXIT_CODE_OPERATOR_IN, Values: []int32{42}},
-		}},
-	})
-	require.NoError(t, err)
-
-	sched := makeRetryTestScheduler(t, true, fakePolicyCache{"no-preempt-policy": policy})
-
-	jobId := util.NewULID()
-	job := testfixtures.NewJob(
-		jobId, "testJobset", "testQueue", uint32(10),
-		toInternalSchedulingInfo(preemptibleSchedulingInfo),
-		false, 1, false, false, false, 1, true,
-	)
-	run := sched.jobDb.CreateRun(
-		uuid.NewString(), 0, jobId, 1,
-		"testExecutor", "testNodeId", "testNode", "testPool", nil,
-		true, false, true, false, nil,
-		false, false, true, false,
-		nil, nil, nil, nil, nil,
-		false, false,
-	)
-	job = job.WithUpdatedRun(run).WithFailed(true)
-
-	txn := sched.jobDb.WriteTxn()
-	defer txn.Abort()
-	require.NoError(t, txn.Upsert([]*jobdb.Job{job}))
-
-	jctx := schedulercontext.JobSchedulingContextsFromJobs([]*jobdb.Job{job})[0]
-	jctx.PreemptionDescription = "preempted by higher priority gang"
-	result := &scheduling.SchedulerResult{
-		PoolResults: []*scheduling.PoolSchedulingResult{
-			{SchedulingResult: &scheduling.SchedulingResult{PreemptedJobs: []*schedulercontext.JobSchedulingContext{jctx}}},
-		},
-	}
-	queueRetryPolicies := map[string]string{"testQueue": "no-preempt-policy"}
-
-	retried, err := sched.applyRetryPolicyToAlgoPreemptions(armadacontext.Background(), txn, result, queueRetryPolicies)
-	require.NoError(t, err)
-	require.Empty(t, retried, "no matching rule must leave the algo's terminal-fail untouched")
-
-	updated := txn.GetById(jobId)
-	require.NotNil(t, updated)
-	assert.True(t, updated.Failed(), "job must keep failed=true when engine does not match")
-}
-
 // TestRetryPolicy_FFOn_GangSkipCounterOnlyWhenPolicyAttached pins the gang
 // skip observability contract: the counter moves only when the gang job's
 // queue actually has a retry policy attached, so operators are not alerted
@@ -864,8 +571,8 @@ func TestRetryPolicy_FFOn_GangSkipCounterOnlyWhenPolicyAttached(t *testing.T) {
 		RetryLimit:    3,
 		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
 		Rules: []*api.RetryRule{{
-			Action:      api.RetryAction_RETRY_ACTION_RETRY,
-			OnExitCodes: &api.RetryExitCodeMatcher{Operator: api.ExitCodeOperator_EXIT_CODE_OPERATOR_IN, Values: []int32{42}},
+			Action:     api.RetryAction_RETRY_ACTION_RETRY,
+			OnCategory: "app-error",
 		}},
 	})
 	require.NoError(t, err)
@@ -883,7 +590,7 @@ func TestRetryPolicy_FFOn_GangSkipCounterOnlyWhenPolicyAttached(t *testing.T) {
 	_, err = sched.generateUpdateMessagesFromJob(
 		armadacontext.Background(),
 		jobNoPolicy,
-		map[string]*armadaevents.Error{jobNoPolicy.LatestRun().Id(): containerErrorWithExitCode(42)},
+		map[string]*armadaevents.Error{jobNoPolicy.LatestRun().Id(): categorizedError("app-error")},
 		map[string]string{},
 		txn,
 	)
@@ -897,7 +604,7 @@ func TestRetryPolicy_FFOn_GangSkipCounterOnlyWhenPolicyAttached(t *testing.T) {
 	_, err = sched.generateUpdateMessagesFromJob(
 		armadacontext.Background(),
 		jobWithPolicy,
-		map[string]*armadaevents.Error{jobWithPolicy.LatestRun().Id(): containerErrorWithExitCode(42)},
+		map[string]*armadaevents.Error{jobWithPolicy.LatestRun().Id(): categorizedError("app-error")},
 		map[string]string{"testQueue": "test-policy"},
 		txn,
 	)
@@ -956,8 +663,9 @@ func TestRetryPolicy_FFOn_LeaseExpiryRetriesWhenPolicyMatches(t *testing.T) {
 		RetryLimit:    3,
 		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
 		Rules: []*api.RetryRule{{
-			Action:       api.RetryAction_RETRY_ACTION_RETRY,
-			OnConditions: []string{"LeaseExpired"},
+			Action:        api.RetryAction_RETRY_ACTION_RETRY,
+			OnCategory:    errormatch.CategoryInternal,
+			OnSubcategory: errormatch.SubcategoryLeaseExpired,
 		}},
 	})
 	require.NoError(t, err)
@@ -1009,8 +717,8 @@ func TestRetryPolicy_FFOn_LeaseExpiryTerminalWhenNoMatch(t *testing.T) {
 		RetryLimit:    3,
 		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
 		Rules: []*api.RetryRule{{
-			Action:      api.RetryAction_RETRY_ACTION_RETRY,
-			OnExitCodes: &api.RetryExitCodeMatcher{Operator: api.ExitCodeOperator_EXIT_CODE_OPERATOR_IN, Values: []int32{42}},
+			Action:     api.RetryAction_RETRY_ACTION_RETRY,
+			OnCategory: "some-other-category",
 		}},
 	})
 	require.NoError(t, err)
@@ -1127,8 +835,8 @@ func TestRetryPolicy_FFOn_EngineRetryAddsNodeAntiAffinity(t *testing.T) {
 		RetryLimit:    3,
 		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
 		Rules: []*api.RetryRule{{
-			Action:      api.RetryAction_RETRY_ACTION_RETRY,
-			OnExitCodes: &api.RetryExitCodeMatcher{Operator: api.ExitCodeOperator_EXIT_CODE_OPERATOR_IN, Values: []int32{42}},
+			Action:     api.RetryAction_RETRY_ACTION_RETRY,
+			OnCategory: "app-error",
 		}},
 	})
 	require.NoError(t, err)
@@ -1140,7 +848,7 @@ func TestRetryPolicy_FFOn_EngineRetryAddsNodeAntiAffinity(t *testing.T) {
 	defer txn.Abort()
 	require.NoError(t, txn.Upsert([]*jobdb.Job{job}))
 
-	jobErrors := map[string]*armadaevents.Error{job.LatestRun().Id(): containerErrorWithExitCode(42)}
+	jobErrors := map[string]*armadaevents.Error{job.LatestRun().Id(): categorizedError("app-error")}
 	queueRetryPolicies := map[string]string{"testQueue": "test-policy"}
 
 	events, err := sched.generateUpdateMessagesFromJob(armadacontext.Background(), job, jobErrors, queueRetryPolicies, txn)
@@ -1162,8 +870,8 @@ func TestRetryPolicy_FFOn_EngineRetryRequeuesWithoutAntiAffinityWhenUnschedulabl
 		RetryLimit:    3,
 		DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
 		Rules: []*api.RetryRule{{
-			Action:      api.RetryAction_RETRY_ACTION_RETRY,
-			OnExitCodes: &api.RetryExitCodeMatcher{Operator: api.ExitCodeOperator_EXIT_CODE_OPERATOR_IN, Values: []int32{42}},
+			Action:     api.RetryAction_RETRY_ACTION_RETRY,
+			OnCategory: "app-error",
 		}},
 	})
 	require.NoError(t, err)
@@ -1176,7 +884,7 @@ func TestRetryPolicy_FFOn_EngineRetryRequeuesWithoutAntiAffinityWhenUnschedulabl
 	defer txn.Abort()
 	require.NoError(t, txn.Upsert([]*jobdb.Job{job}))
 
-	jobErrors := map[string]*armadaevents.Error{job.LatestRun().Id(): containerErrorWithExitCode(42)}
+	jobErrors := map[string]*armadaevents.Error{job.LatestRun().Id(): categorizedError("app-error")}
 	queueRetryPolicies := map[string]string{"testQueue": "test-policy"}
 
 	events, err := sched.generateUpdateMessagesFromJob(armadacontext.Background(), job, jobErrors, queueRetryPolicies, txn)

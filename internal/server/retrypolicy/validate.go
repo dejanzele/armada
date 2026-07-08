@@ -39,9 +39,10 @@ func ValidatePolicy(p *api.RetryPolicy) error {
 			return fmt.Errorf("retry policy %q rule %d: %w", p.Name, i, err)
 		}
 	}
-	// The scheduler's policy loader rejects an unspecified default action, so
-	// reject it here too rather than accept a policy the scheduler will drop.
-	if p.DefaultAction == api.RetryAction_RETRY_ACTION_UNSPECIFIED {
+	// The scheduler's policy loader accepts only Fail or Retry, so reject
+	// anything else here too rather than accept a policy the scheduler will
+	// silently drop.
+	if p.DefaultAction != api.RetryAction_RETRY_ACTION_FAIL && p.DefaultAction != api.RetryAction_RETRY_ACTION_RETRY {
 		return fmt.Errorf("retry policy %q must set a default action (Fail or Retry)", p.Name)
 	}
 	return nil
@@ -51,30 +52,13 @@ func validateRule(r *api.RetryRule) error {
 	if r == nil {
 		return fmt.Errorf("rule must not be nil")
 	}
-	if r.Action == api.RetryAction_RETRY_ACTION_UNSPECIFIED {
-		return fmt.Errorf("action must be specified")
+	if r.Action != api.RetryAction_RETRY_ACTION_FAIL && r.Action != api.RetryAction_RETRY_ACTION_RETRY {
+		return fmt.Errorf("action must be Fail or Retry")
 	}
-	// on_subcategory only narrows an on_category match, so it does not count
-	// as a matcher on its own. This mirrors the scheduler engine's rule
-	// compilation in internal/scheduler/retry.
-	if len(r.OnConditions) == 0 && r.OnExitCodes == nil && r.OnTerminationMessagePattern == "" && r.OnCategory == "" {
-		return fmt.Errorf("at least one matcher must be set (on_conditions, on_exit_codes, on_termination_message_pattern, or on_category)")
-	}
-	if r.OnSubcategory != "" && r.OnCategory == "" {
-		return fmt.Errorf("on_subcategory requires on_category to be set")
-	}
-	if r.OnExitCodes != nil {
-		if r.OnExitCodes.Operator == api.ExitCodeOperator_EXIT_CODE_OPERATOR_UNSPECIFIED {
-			return fmt.Errorf("on_exit_codes operator must be specified")
-		}
-		if len(r.OnExitCodes.Values) == 0 {
-			return fmt.Errorf("on_exit_codes values must not be empty")
-		}
-	}
-	if r.OnTerminationMessagePattern != "" {
-		if _, err := regexp.Compile(r.OnTerminationMessagePattern); err != nil {
-			return fmt.Errorf("on_termination_message_pattern is not a valid regular expression: %w", err)
-		}
+	// v1 matches on category only. on_subcategory only narrows an on_category
+	// match, so it does not count as a matcher on its own.
+	if r.OnCategory == "" {
+		return fmt.Errorf("on_category must be set")
 	}
 	return nil
 }

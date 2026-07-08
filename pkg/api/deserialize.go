@@ -92,17 +92,6 @@ func (x *RetryAction) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// UnmarshalJSON for ExitCodeOperator accepts the proto canonical name
-// ("EXIT_CODE_OPERATOR_IN"), a numeric value, or a friendly alias ("In", "NotIn").
-func (x *ExitCodeOperator) UnmarshalJSON(data []byte) error {
-	v, err := unmarshalProtoEnum(data, "ExitCodeOperator", "EXIT_CODE_OPERATOR_", ExitCodeOperator_value, ExitCodeOperator_name)
-	if err != nil {
-		return err
-	}
-	*x = ExitCodeOperator(v)
-	return nil
-}
-
 // unmarshalProtoEnum decodes a proto3 enum from JSON, accepting:
 //   - a numeric value (e.g. 1)
 //   - the canonical proto name (e.g. "RETRY_ACTION_FAIL")

@@ -82,12 +82,8 @@ func (e *Engine) Evaluate(policy *Policy, runError *armadaevents.Error, counts C
 	}
 
 	matched := matchRules(policy.Rules, matchInput{
-		condition:          extractCondition(runError),
-		exitCode:           extractExitCode(runError),
-		terminationMessage: extractTerminationMessage(runError),
-		isContainerFailure: runError.GetPodError() != nil,
-		category:           extractCategory(runError),
-		subcategory:        extractSubcategory(runError),
+		category:    extractCategory(runError),
+		subcategory: extractSubcategory(runError),
 	})
 
 	action, reason := policy.DefaultAction, reasonDefault

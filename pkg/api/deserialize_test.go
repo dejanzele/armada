@@ -171,24 +171,3 @@ func TestUnmarshalRetryAction_RejectsInvalid(t *testing.T) {
 		})
 	}
 }
-
-func TestUnmarshalExitCodeOperator_AcceptsCanonicalAliasAndNumeric(t *testing.T) {
-	tests := map[string]struct {
-		input    string
-		expected ExitCodeOperator
-	}{
-		"canonical IN":     {`"EXIT_CODE_OPERATOR_IN"`, ExitCodeOperator_EXIT_CODE_OPERATOR_IN},
-		"canonical NOT_IN": {`"EXIT_CODE_OPERATOR_NOT_IN"`, ExitCodeOperator_EXIT_CODE_OPERATOR_NOT_IN},
-		"alias In":         {`"In"`, ExitCodeOperator_EXIT_CODE_OPERATOR_IN},
-		"alias NotIn":      {`"NotIn"`, ExitCodeOperator_EXIT_CODE_OPERATOR_NOT_IN},
-		"alias notin":      {`"notin"`, ExitCodeOperator_EXIT_CODE_OPERATOR_NOT_IN},
-		"numeric 1":        {`1`, ExitCodeOperator_EXIT_CODE_OPERATOR_IN},
-	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			var got ExitCodeOperator
-			require.NoError(t, got.UnmarshalJSON([]byte(tc.input)))
-			assert.Equal(t, tc.expected, got)
-		})
-	}
-}

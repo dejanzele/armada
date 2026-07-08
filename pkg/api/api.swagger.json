@@ -1033,15 +1033,6 @@
         }
       }
     },
-    "apiExitCodeOperator": {
-      "type": "string",
-      "default": "EXIT_CODE_OPERATOR_UNSPECIFIED",
-      "enum": [
-        "EXIT_CODE_OPERATOR_UNSPECIFIED",
-        "EXIT_CODE_OPERATOR_IN",
-        "EXIT_CODE_OPERATOR_NOT_IN"
-      ]
-    },
     "apiGetActiveQueuesRequest": {
       "type": "object"
     },
@@ -2412,21 +2403,6 @@
         "RETRY_ACTION_RETRY"
       ]
     },
-    "apiRetryExitCodeMatcher": {
-      "type": "object",
-      "properties": {
-        "operator": {
-          "$ref": "#/definitions/apiExitCodeOperator"
-        },
-        "values": {
-          "type": "array",
-          "items": {
-            "type": "integer",
-            "format": "int32"
-          }
-        }
-      }
-    },
     "apiRetryPolicy": {
       "description": "RetryPolicy defines rules that determine whether failed jobs should be retried.\nOperators create policies and assign them to queues by name.",
       "type": "object",
@@ -2471,19 +2447,7 @@
           "description": "on_category matches against Error.failure_category. When set with on_subcategory,\nboth must match. Mirrors the engine's Rule.OnCategory / Rule.OnSubcategory.",
           "type": "string"
         },
-        "onConditions": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "onExitCodes": {
-          "$ref": "#/definitions/apiRetryExitCodeMatcher"
-        },
         "onSubcategory": {
-          "type": "string"
-        },
-        "onTerminationMessagePattern": {
           "type": "string"
         }
       }

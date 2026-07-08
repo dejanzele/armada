@@ -22,7 +22,6 @@ import (
 	protoutil "github.com/armadaproject/armada/internal/common/proto"
 	"github.com/armadaproject/armada/internal/common/pulsarutils"
 	priorityTypes "github.com/armadaproject/armada/internal/common/types"
-	"github.com/armadaproject/armada/internal/scheduler/configuration"
 	"github.com/armadaproject/armada/internal/scheduler/database"
 	"github.com/armadaproject/armada/internal/scheduler/schedulerobjects"
 	"github.com/armadaproject/armada/internal/server/permissions"
@@ -50,12 +49,8 @@ type ExecutorApi struct {
 	nodeIdLabel      string
 	// See scheduling schedulingConfig.
 	priorityClassNameOverride *string
-	// Retry policy config. When Enabled is true, the executor api populates the
-	// optional JobRunIndex field on outgoing JobRunLease messages for retried
-	// attempts (run index > 0) so the executor can give them fresh pod names.
-	retryPolicy configuration.RetryPolicyConfig
-	clock       clock.Clock
-	authorizer  auth.ActionAuthorizer
+	clock                     clock.Clock
+	authorizer                auth.ActionAuthorizer
 }
 
 func NewExecutorApi(publisher pulsarutils.Publisher[*armadaevents.EventSequence],
@@ -66,7 +61,6 @@ func NewExecutorApi(publisher pulsarutils.Publisher[*armadaevents.EventSequence]
 	nodeIdLabel string,
 	priorityClassNameOverride *string,
 	priorityClasses map[string]priorityTypes.PriorityClass,
-	retryPolicy configuration.RetryPolicyConfig,
 	authorizer auth.ActionAuthorizer,
 ) (*ExecutorApi, error) {
 	if len(allowedPriorities) == 0 {
@@ -81,7 +75,6 @@ func NewExecutorApi(publisher pulsarutils.Publisher[*armadaevents.EventSequence]
 		nodeIdLabel:               nodeIdLabel,
 		priorityClassNameOverride: priorityClassNameOverride,
 		priorityClasses:           priorityClasses,
-		retryPolicy:               retryPolicy,
 		clock:                     clock.RealClock{},
 		authorizer:                authorizer,
 	}, nil
@@ -183,13 +176,6 @@ func (srv *ExecutorApi) LeaseJobRuns(stream executorapi.ExecutorApi_LeaseJobRuns
 			User:     lease.UserID,
 			Groups:   groups,
 			Job:      submitMsg,
-		}
-		// First attempts (index 0) keep the legacy pod name forever, so
-		// flipping the retry-policy flag never renames existing-style pods.
-		// Only genuinely retried attempts (index > 0) need a fresh name, to
-		// avoid colliding with a stuck terminating predecessor pod.
-		if srv.retryPolicy.Enabled && lease.RunIndex > 0 {
-			jobRunLease.JobRunIndex = &types.UInt32Value{Value: lease.RunIndex}
 		}
 		err := stream.Send(&executorapi.LeaseStreamMessage{
 			Event: &executorapi.LeaseStreamMessage_Lease{

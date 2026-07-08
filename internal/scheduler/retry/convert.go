@@ -3,14 +3,12 @@ package retry
 import (
 	"fmt"
 
-	"github.com/armadaproject/armada/internal/common/errormatch"
 	"github.com/armadaproject/armada/pkg/api"
 )
 
 // ConvertPolicy translates an api.RetryPolicy proto into the internal Policy,
-// validating fields and pre-compiling regex patterns via CompileRules.
-// Returns an error for any malformed field (invalid regex, unknown action,
-// missing values, etc.).
+// validating fields. Returns an error for any malformed field (unknown action,
+// missing category, etc.).
 func ConvertPolicy(p *api.RetryPolicy) (*Policy, error) {
 	if p == nil {
 		return nil, fmt.Errorf("retry policy is nil")
@@ -36,7 +34,7 @@ func ConvertPolicy(p *api.RetryPolicy) (*Policy, error) {
 		DefaultAction: defaultAction,
 		Rules:         rules,
 	}
-	if err := CompileRules(policy.Rules); err != nil {
+	if err := ValidatePolicy(*policy); err != nil {
 		return nil, fmt.Errorf("policy %q: %w", p.Name, err)
 	}
 	return policy, nil
@@ -65,37 +63,9 @@ func convertRule(r *api.RetryRule) (Rule, error) {
 		return Rule{}, fmt.Errorf("action: %w", err)
 	}
 
-	// Deep-copy slices so the cached Policy does not retain references into
-	// the API response (which becomes GC-eligible after this call returns).
-	rule := Rule{
+	return Rule{
 		Action:        action,
-		OnConditions:  append([]string(nil), r.OnConditions...),
 		OnCategory:    r.OnCategory,
 		OnSubcategory: r.OnSubcategory,
-	}
-	if r.OnExitCodes != nil {
-		op, err := convertExitCodeOperator(r.OnExitCodes.Operator)
-		if err != nil {
-			return Rule{}, fmt.Errorf("on_exit_codes: %w", err)
-		}
-		rule.OnExitCodes = &errormatch.ExitCodeMatcher{
-			Operator: op,
-			Values:   append([]int32(nil), r.OnExitCodes.Values...),
-		}
-	}
-	if r.OnTerminationMessagePattern != "" {
-		rule.OnTerminationMessage = &errormatch.RegexMatcher{Pattern: r.OnTerminationMessagePattern}
-	}
-	return rule, nil
-}
-
-func convertExitCodeOperator(op api.ExitCodeOperator) (errormatch.ExitCodeOperator, error) {
-	switch op {
-	case api.ExitCodeOperator_EXIT_CODE_OPERATOR_IN:
-		return errormatch.ExitCodeOperatorIn, nil
-	case api.ExitCodeOperator_EXIT_CODE_OPERATOR_NOT_IN:
-		return errormatch.ExitCodeOperatorNotIn, nil
-	default:
-		return "", fmt.Errorf("unknown operator %q", op.String())
-	}
+	}, nil
 }

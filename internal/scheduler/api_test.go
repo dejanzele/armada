@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/gogo/protobuf/proto"
-	gogotypes "github.com/gogo/protobuf/types"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -212,12 +211,11 @@ func TestExecutorApi_LeaseJobRuns(t *testing.T) {
 	}
 
 	tests := map[string]struct {
-		request            *executorapi.LeaseRequest
-		runsToCancel       []string
-		leases             []*database.JobRunLease
-		retryPolicyEnabled bool
-		expectedExecutor   *schedulerobjects.Executor
-		expectedMsgs       []*executorapi.LeaseStreamMessage
+		request          *executorapi.LeaseRequest
+		runsToCancel     []string
+		leases           []*database.JobRunLease
+		expectedExecutor *schedulerobjects.Executor
+		expectedMsgs     []*executorapi.LeaseStreamMessage
 	}{
 		"lease and cancel": {
 			request:          defaultRequest,
@@ -305,54 +303,10 @@ func TestExecutorApi_LeaseJobRuns(t *testing.T) {
 				},
 			},
 		},
-		"retry policy on, first attempt keeps legacy name": {
-			request:            defaultRequest,
-			leases:             []*database.JobRunLease{defaultLease},
-			retryPolicyEnabled: true,
-			expectedExecutor:   defaultExpectedExecutor,
-			expectedMsgs: []*executorapi.LeaseStreamMessage{
-				{
-					Event: &executorapi.LeaseStreamMessage_Lease{Lease: &executorapi.JobRunLease{
-						JobRunId: defaultLease.RunID,
-						Queue:    defaultLease.Queue,
-						Jobset:   defaultLease.JobSet,
-						User:     defaultLease.UserID,
-						Groups:   groups,
-						Job:      submit,
-					}},
-				},
-				{
-					Event: &executorapi.LeaseStreamMessage_End{End: &executorapi.EndMarker{}},
-				},
-			},
-		},
-		"retry policy on, retried attempt gets run index": {
-			request:            defaultRequest,
-			leases:             []*database.JobRunLease{retriedLease},
-			retryPolicyEnabled: true,
-			expectedExecutor:   defaultExpectedExecutor,
-			expectedMsgs: []*executorapi.LeaseStreamMessage{
-				{
-					Event: &executorapi.LeaseStreamMessage_Lease{Lease: &executorapi.JobRunLease{
-						JobRunId:    retriedLease.RunID,
-						Queue:       retriedLease.Queue,
-						Jobset:      retriedLease.JobSet,
-						User:        retriedLease.UserID,
-						Groups:      groups,
-						Job:         submit,
-						JobRunIndex: &gogotypes.UInt32Value{Value: 2},
-					}},
-				},
-				{
-					Event: &executorapi.LeaseStreamMessage_End{End: &executorapi.EndMarker{}},
-				},
-			},
-		},
-		"retry policy off, retried attempt keeps legacy name": {
-			request:            defaultRequest,
-			leases:             []*database.JobRunLease{retriedLease},
-			retryPolicyEnabled: false,
-			expectedExecutor:   defaultExpectedExecutor,
+		"retried attempt reuses the legacy pod name": {
+			request:          defaultRequest,
+			leases:           []*database.JobRunLease{retriedLease},
+			expectedExecutor: defaultExpectedExecutor,
 			expectedMsgs: []*executorapi.LeaseStreamMessage{
 				{
 					Event: &executorapi.LeaseStreamMessage_Lease{Lease: &executorapi.JobRunLease{
@@ -419,7 +373,6 @@ func TestExecutorApi_LeaseJobRuns(t *testing.T) {
 				"kubernetes.io/hostname",
 				nil,
 				priorityClasses,
-				schedulerconfig.RetryPolicyConfig{Enabled: tc.retryPolicyEnabled},
 				mockAuthorizer,
 			)
 			require.NoError(t, err)
@@ -477,7 +430,6 @@ func TestExecutorApi_LeaseJobRuns_Unauthorised(t *testing.T) {
 		"kubernetes.io/hostname",
 		nil,
 		priorityClasses,
-		schedulerconfig.RetryPolicyConfig{},
 		mockAuthorizer,
 	)
 
@@ -607,7 +559,6 @@ func TestExecutorApi_Publish(t *testing.T) {
 				"kubernetes.io/hostname",
 				nil,
 				priorityClasses,
-				schedulerconfig.RetryPolicyConfig{},
 				mockAuthorizer,
 			)
 
@@ -655,7 +606,6 @@ func TestExecutorApi_Publish_Unauthorised(t *testing.T) {
 		"kubernetes.io/hostname",
 		nil,
 		priorityClasses,
-		schedulerconfig.RetryPolicyConfig{},
 		mockAuthorizer,
 	)
 

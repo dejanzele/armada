@@ -773,9 +773,10 @@ func preemptingJobId(preemptingJob *jobdb.Job) string {
 	return preemptingJob.Id()
 }
 
-// newPreemptedRunError wraps a preemption reason in the armadaevents.Error
-// shape the retry engine matches against (`onConditions: ["Preempted"]`).
-// Used by both preempt paths (user-preempt branch and algo-preempt
+// newPreemptedRunError wraps a preemption reason in a JobRunPreemptedError.
+// It carries no failure category, so v1 category-only policies reach it only
+// via their default action; preemption-specific retry matching is a later
+// enhancement. Used by both preempt paths (user-preempt branch and algo-preempt
 // post-process) to synthesise the runError handed to evaluateRetryPolicy.
 func newPreemptedRunError(reason string) *armadaevents.Error {
 	return &armadaevents.Error{
@@ -1055,7 +1056,12 @@ func (s *Scheduler) evaluateRetryPolicy(
 	runError *armadaevents.Error,
 	queueRetryPolicies map[string]string,
 ) (shouldRetry bool, reason string, decided bool) {
+	// A queue's attached policy wins; otherwise fall back to the fleet-wide
+	// default policy, if one is configured.
 	policyName := queueRetryPolicies[job.Queue()]
+	if policyName == "" {
+		policyName = s.retryPolicyConfig.DefaultPolicyName
+	}
 
 	// Gang retry is deliberately unsupported: retrying a single member would
 	// either deadlock the QueuedGangIterator waiting for full cardinality or
@@ -1461,9 +1467,10 @@ func (s *Scheduler) generateUpdateMessagesFromJob(ctx *armadacontext.Context, jo
 				// must exclude it so the failure budget is untouched.
 				job = job.WithUpdatedRun(lastRun.WithoutTerminal().WithFailed(true).WithPreempted(true))
 
-				// Synthesise a JobRunPreemptedError so policies with
-				// `onConditions: ["Preempted"]` match. The run is dead either
-				// way. Only the job-level retry vs terminal-fail is engine-driven.
+				// Synthesise a JobRunPreemptedError for the engine. It has no
+				// category, so v1 category-only policies reach it only via their
+				// default action. The run is dead either way; only the job-level
+				// retry vs terminal-fail is engine-driven.
 				shouldRetry, _, decided := s.evaluateRetryPolicy(ctx, job, newPreemptedRunError(reason), queueRetryPolicies)
 
 				if decided && shouldRetry {

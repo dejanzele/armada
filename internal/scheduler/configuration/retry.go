@@ -10,4 +10,9 @@ type RetryPolicyConfig struct {
 	// kill switch: no job is ever retried by the policy engine. There is no
 	// unlimited setting for the global cap.
 	GlobalMaxRetries uint `yaml:"globalMaxRetries"`
+	// DefaultPolicyName is the retry policy applied to jobs whose queue has no
+	// policy of its own. It lets an operator turn on retry policies fleet-wide
+	// with a single named policy before per-queue attachment is configured.
+	// Required when Enabled is true; otherwise no job would ever be retried.
+	DefaultPolicyName string `yaml:"defaultPolicyName"`
 }

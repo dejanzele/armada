@@ -1044,15 +1044,6 @@ func SwaggerJsonTemplate() string {
 		"        }\n" +
 		"      }\n" +
 		"    },\n" +
-		"    \"apiExitCodeOperator\": {\n" +
-		"      \"type\": \"string\",\n" +
-		"      \"default\": \"EXIT_CODE_OPERATOR_UNSPECIFIED\",\n" +
-		"      \"enum\": [\n" +
-		"        \"EXIT_CODE_OPERATOR_UNSPECIFIED\",\n" +
-		"        \"EXIT_CODE_OPERATOR_IN\",\n" +
-		"        \"EXIT_CODE_OPERATOR_NOT_IN\"\n" +
-		"      ]\n" +
-		"    },\n" +
 		"    \"apiGetActiveQueuesRequest\": {\n" +
 		"      \"type\": \"object\"\n" +
 		"    },\n" +
@@ -2423,21 +2414,6 @@ func SwaggerJsonTemplate() string {
 		"        \"RETRY_ACTION_RETRY\"\n" +
 		"      ]\n" +
 		"    },\n" +
-		"    \"apiRetryExitCodeMatcher\": {\n" +
-		"      \"type\": \"object\",\n" +
-		"      \"properties\": {\n" +
-		"        \"operator\": {\n" +
-		"          \"$ref\": \"#/definitions/apiExitCodeOperator\"\n" +
-		"        },\n" +
-		"        \"values\": {\n" +
-		"          \"type\": \"array\",\n" +
-		"          \"items\": {\n" +
-		"            \"type\": \"integer\",\n" +
-		"            \"format\": \"int32\"\n" +
-		"          }\n" +
-		"        }\n" +
-		"      }\n" +
-		"    },\n" +
 		"    \"apiRetryPolicy\": {\n" +
 		"      \"description\": \"RetryPolicy defines rules that determine whether failed jobs should be retried.\\nOperators create policies and assign them to queues by name.\",\n" +
 		"      \"type\": \"object\",\n" +
@@ -2482,19 +2458,7 @@ func SwaggerJsonTemplate() string {
 		"          \"description\": \"on_category matches against Error.failure_category. When set with on_subcategory,\\nboth must match. Mirrors the engine's Rule.OnCategory / Rule.OnSubcategory.\",\n" +
 		"          \"type\": \"string\"\n" +
 		"        },\n" +
-		"        \"onConditions\": {\n" +
-		"          \"type\": \"array\",\n" +
-		"          \"items\": {\n" +
-		"            \"type\": \"string\"\n" +
-		"          }\n" +
-		"        },\n" +
-		"        \"onExitCodes\": {\n" +
-		"          \"$ref\": \"#/definitions/apiRetryExitCodeMatcher\"\n" +
-		"        },\n" +
 		"        \"onSubcategory\": {\n" +
-		"          \"type\": \"string\"\n" +
-		"        },\n" +
-		"        \"onTerminationMessagePattern\": {\n" +
 		"          \"type\": \"string\"\n" +
 		"        }\n" +
 		"      }\n" +

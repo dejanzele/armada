@@ -253,24 +253,15 @@ enum RetryAction {
 
 message RetryRule {
     RetryAction action = 1;
-    repeated string on_conditions = 2;
-    RetryExitCodeMatcher on_exit_codes = 3;
-    string on_termination_message_pattern = 4;
+    // Fields 2-4 (on_conditions, on_exit_codes, on_termination_message_pattern)
+    // are reserved for signal-based matchers, a planned follow-up. v1 matches on
+    // category only: the executor categorizer is the single signal-matcher.
+    reserved 2, 3, 4;
+    reserved "on_conditions", "on_exit_codes", "on_termination_message_pattern";
     // on_category matches against Error.failure_category. When set with on_subcategory,
     // both must match. Mirrors the engine's Rule.OnCategory / Rule.OnSubcategory.
     string on_category = 5;
     string on_subcategory = 6;
-}
-
-enum ExitCodeOperator {
-    EXIT_CODE_OPERATOR_UNSPECIFIED = 0;
-    EXIT_CODE_OPERATOR_IN = 1;
-    EXIT_CODE_OPERATOR_NOT_IN = 2;
-}
-
-message RetryExitCodeMatcher {
-    ExitCodeOperator operator = 1;
-    repeated int32 values = 2;
 }
 
 message RetryPolicyGetRequest {

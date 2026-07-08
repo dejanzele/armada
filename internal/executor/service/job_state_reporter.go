@@ -137,6 +137,26 @@ func (stateReporter *JobStateReporter) reportCurrentStatus(pod *v1.Pod) {
 		}
 	})
 
+	// For a category whose action is Delete, delete the pod now that the terminal
+	// event is queued. The scheduler's retry policy decides whether to retry;
+	// deleting here just frees the legacy pod name so that retry does not hit
+	// AlreadyExists when it re-leases the run under the same name. We delete
+	// synchronously via DeletePodWithCondition rather than the async DeletePods
+	// queue: that queue is keyed by job id and pod number, so a same-named
+	// predecessor from an earlier attempt would dedupe this delete away, and it
+	// only drains every podDeletionInterval, both of which let the re-lease win
+	// the race. DeletePodWithCondition also marks the pod for deletion, so it is
+	// not mistaken for an external delete. Only ordinary failures reach here:
+	// pods handled by the issue handler returned above.
+	if pod.Status.Phase == v1.PodFailed && classifyResult.Action == categorizer.PodFailureActionDelete {
+		err := stateReporter.clusterContext.DeletePodWithCondition(pod, func(p *v1.Pod) bool {
+			return p.Status.Phase == v1.PodFailed
+		}, false)
+		if err != nil {
+			log.Errorf("Failed to delete failed pod %s: %v", pod.Name, err)
+		}
+	}
+
 	if pod.Status.Phase == v1.PodRunning && requiresIngressToBeReported(pod) {
 		stateReporter.attemptToReportIngressInfoEvent(pod)
 	}

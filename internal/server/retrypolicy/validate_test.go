@@ -11,13 +11,6 @@ import (
 )
 
 func TestValidatePolicy(t *testing.T) {
-	validRule := func() *api.RetryRule {
-		return &api.RetryRule{
-			Action:       api.RetryAction_RETRY_ACTION_RETRY,
-			OnConditions: []string{"OOMKilled"},
-		}
-	}
-
 	tests := map[string]struct {
 		policy      *api.RetryPolicy
 		wantErr     string
@@ -59,15 +52,6 @@ func TestValidatePolicy(t *testing.T) {
 			},
 			wantErr: "at most 63 characters",
 		},
-		"unspecified default action rejected even with rules": {
-			policy: &api.RetryPolicy{
-				Name: "p1",
-				Rules: []*api.RetryRule{
-					{Action: api.RetryAction_RETRY_ACTION_RETRY, OnConditions: []string{"OOMKilled"}},
-				},
-			},
-			wantErr: "must set a default action",
-		},
 		"nil rule": {
 			policy: &api.RetryPolicy{
 				Name:  "p1",
@@ -79,10 +63,10 @@ func TestValidatePolicy(t *testing.T) {
 			policy: &api.RetryPolicy{
 				Name: "p1",
 				Rules: []*api.RetryRule{
-					{OnConditions: []string{"OOMKilled"}},
+					{},
 				},
 			},
-			wantErr: "action must be specified",
+			wantErr: "action must be Fail or Retry",
 		},
 		"rule with no matchers": {
 			policy: &api.RetryPolicy{
@@ -91,7 +75,7 @@ func TestValidatePolicy(t *testing.T) {
 					{Action: api.RetryAction_RETRY_ACTION_RETRY},
 				},
 			},
-			wantErr: "at least one matcher",
+			wantErr: "on_category must be set",
 		},
 		"rule with only subcategory": {
 			policy: &api.RetryPolicy{
@@ -103,68 +87,7 @@ func TestValidatePolicy(t *testing.T) {
 					},
 				},
 			},
-			wantErr: "at least one matcher",
-		},
-		"subcategory without category": {
-			policy: &api.RetryPolicy{
-				Name: "p1",
-				Rules: []*api.RetryRule{
-					{
-						Action:        api.RetryAction_RETRY_ACTION_RETRY,
-						OnConditions:  []string{"OOMKilled"},
-						OnSubcategory: "oom",
-					},
-				},
-			},
-			wantErr: "on_subcategory requires on_category",
-		},
-		"exit code matcher with unspecified operator": {
-			policy: &api.RetryPolicy{
-				Name: "p1",
-				Rules: []*api.RetryRule{
-					{
-						Action:      api.RetryAction_RETRY_ACTION_RETRY,
-						OnExitCodes: &api.RetryExitCodeMatcher{Values: []int32{1}},
-					},
-				},
-			},
-			wantErr: "operator must be specified",
-		},
-		"exit code matcher with no values": {
-			policy: &api.RetryPolicy{
-				Name: "p1",
-				Rules: []*api.RetryRule{
-					{
-						Action: api.RetryAction_RETRY_ACTION_RETRY,
-						OnExitCodes: &api.RetryExitCodeMatcher{
-							Operator: api.ExitCodeOperator_EXIT_CODE_OPERATOR_IN,
-						},
-					},
-				},
-			},
-			wantErr: "values must not be empty",
-		},
-		"invalid termination message pattern": {
-			policy: &api.RetryPolicy{
-				Name: "p1",
-				Rules: []*api.RetryRule{
-					{
-						Action:                      api.RetryAction_RETRY_ACTION_RETRY,
-						OnTerminationMessagePattern: "[unclosed",
-					},
-				},
-			},
-			wantErr: "not a valid regular expression",
-		},
-		"error names the offending rule index": {
-			policy: &api.RetryPolicy{
-				Name: "p1",
-				Rules: []*api.RetryRule{
-					validRule(),
-					{Action: api.RetryAction_RETRY_ACTION_RETRY},
-				},
-			},
-			wantErr: "rule 1",
+			wantErr: "on_category must be set",
 		},
 		"valid policy with default action only": {
 			policy: &api.RetryPolicy{
@@ -173,28 +96,14 @@ func TestValidatePolicy(t *testing.T) {
 			},
 			wantErrNone: true,
 		},
-		"valid policy with every matcher type": {
+		"valid policy with on_category rule": {
 			policy: &api.RetryPolicy{
-				Name:          "my-policy-1",
-				RetryLimit:    3,
+				Name:          "p1",
 				DefaultAction: api.RetryAction_RETRY_ACTION_FAIL,
 				Rules: []*api.RetryRule{
-					validRule(),
 					{
-						Action: api.RetryAction_RETRY_ACTION_RETRY,
-						OnExitCodes: &api.RetryExitCodeMatcher{
-							Operator: api.ExitCodeOperator_EXIT_CODE_OPERATOR_NOT_IN,
-							Values:   []int32{0, 137},
-						},
-					},
-					{
-						Action:                      api.RetryAction_RETRY_ACTION_FAIL,
-						OnTerminationMessagePattern: "disk quota exceeded.*",
-					},
-					{
-						Action:        api.RetryAction_RETRY_ACTION_RETRY,
-						OnCategory:    "infrastructure",
-						OnSubcategory: "node-failure",
+						Action:     api.RetryAction_RETRY_ACTION_RETRY,
+						OnCategory: "transient",
 					},
 				},
 			},
