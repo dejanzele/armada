@@ -135,7 +135,7 @@ func CreatePodFromExecutorApiJob(job *executorapi.JobRunLease, defaults *configu
 	applyDefaults(podSpec, defaults)
 	setRestartPolicyNever(podSpec)
 
-	injectArmadaEnvVars(podSpec, jobId, job.Queue, job.Jobset, annotation)
+	injectArmadaEnvVars(podSpec, jobId, runId, job.Queue, job.Jobset, annotation)
 
 	pod := &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -176,10 +176,11 @@ func setRestartPolicyNever(podSpec *v1.PodSpec) {
 
 // injectArmadaEnvVars injects Armada system environment variables into all containers.
 // It injects base variables for all jobs and additional variables for gang-scheduled jobs.
-func injectArmadaEnvVars(podSpec *v1.PodSpec, jobId string, queue string, jobsetId string, annotations map[string]string) {
+func injectArmadaEnvVars(podSpec *v1.PodSpec, jobId string, runId string, queue string, jobsetId string, annotations map[string]string) {
 	// Base environment variables for all jobs
 	baseEnvVars := []v1.EnvVar{
 		{Name: serverconfiguration.JobIdEnvVar, Value: jobId},
+		{Name: serverconfiguration.JobRunIdEnvVar, Value: runId},
 		{Name: serverconfiguration.QueueEnvVar, Value: queue},
 		{Name: serverconfiguration.JobSetIdEnvVar, Value: jobsetId},
 	}
