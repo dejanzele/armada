@@ -801,6 +801,7 @@ func TestRetryPolicy_FFOff_FailedRunIdentity(t *testing.T) {
 			Event: &armadaevents.EventSequence_Event_JobErrors{
 				JobErrors: &armadaevents.JobErrors{
 					JobId:  job.Id(),
+					RunId:  job.LatestRun().Id(),
 					Errors: []*armadaevents.Error{runError},
 				},
 			},
